@@ -14,6 +14,10 @@ Active and saved profiles stay in `profile.md`, `active-profile.txt`, and
 `profiles/`. These paths are ignored by Git because they contain personal
 preferences and response history.
 
+Imported meme images stay in `cache/images/`; `cache/meme-index.json` records
+their clues, tags, source, hash, and usage count. The cache is local and ignored
+by Git. Existing clue matches can be queried with the `find_meme` canvas action.
+
 ## Commands
 
 - `trafione` increases humor and records a hit.

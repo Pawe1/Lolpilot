@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { joinSession, createCanvas, CanvasError } from "@github/copilot-sdk/extension";
 
@@ -7,6 +8,7 @@ const ACTIVE_PROFILE_PATH = `${ROOT}\\profile.md`;
 const PROFILES_DIR = `${ROOT}\\profiles`;
 const ACTIVE_NAME_PATH = `${ROOT}\\active-profile.txt`;
 const IMAGE_CACHE_DIR = `${ROOT}\\cache\\images`;
+const MEME_INDEX_PATH = `${ROOT}\\cache\\meme-index.json`;
 const servers = new Map();
 
 const defaultProfile = {
@@ -16,6 +18,101 @@ const defaultProfile = {
     hits: 0,
     misses: 0,
 };
+
+async function loadMemeIndex() {
+    try {
+        const parsed = JSON.parse(await readFile(MEME_INDEX_PATH, "utf8"));
+        return {
+            version: 1,
+            images: Array.isArray(parsed.images) ? parsed.images : [],
+        };
+    } catch {
+        return { version: 1, images: [] };
+    }
+}
+
+async function saveMemeIndex(index) {
+    await mkdir(IMAGE_CACHE_DIR, { recursive: true });
+    await writeFile(MEME_INDEX_PATH, `${JSON.stringify(index, null, 2)}\n`, "utf8");
+    return index;
+}
+
+function normalizeTags(tags) {
+    return [...new Set(String(tags || "")
+        .split(/[,#\n]/)
+        .map((tag) => tag.trim().toLowerCase().replace(/\s+/g, "-"))
+        .filter(Boolean))]
+        .slice(0, 24);
+}
+
+async function addMeme({ fileName, mimeType, dataUrl, tags, clue, source = "local-import" }) {
+    if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mimeType)) {
+        throw new CanvasError("invalid_image_type", "Use PNG, JPEG, GIF, or WebP.");
+    }
+    const match = String(dataUrl || "").match(/^data:[^;]+;base64,(.+)$/);
+    if (!match) throw new CanvasError("invalid_image", "The selected image could not be read.");
+    const bytes = Buffer.from(match[1], "base64");
+    if (!bytes.length || bytes.length > 8 * 1024 * 1024) {
+        throw new CanvasError("invalid_image_size", "Image size must be between 1 byte and 8 MiB.");
+    }
+    const extension = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" }[mimeType];
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const index = await loadMemeIndex();
+    const existing = index.images.find((image) => image.hash === hash);
+    if (existing) {
+        const mergedTags = [...new Set([...existing.tags, ...normalizeTags(tags)])];
+        existing.tags = mergedTags;
+        existing.clue = String(clue || existing.clue || "").trim().slice(0, 240);
+        await saveMemeIndex(index);
+        return existing;
+    }
+    const id = hash.slice(0, 16);
+    const safeBase = String(fileName || "meme").replace(/\.[^.]+$/, "").replace(/[^a-z0-9_-]+/gi, "-")
+        .replace(/^-+|-+$/g, "").slice(0, 40) || "meme";
+    const file = `${safeBase}-${id}.${extension}`;
+    await mkdir(IMAGE_CACHE_DIR, { recursive: true });
+    await writeFile(`${IMAGE_CACHE_DIR}\\${file}`, bytes);
+    const image = {
+        id,
+        file,
+        mimeType,
+        hash,
+        tags: normalizeTags(tags),
+        clue: String(clue || "").trim().slice(0, 240),
+        source: String(source || "local-import").trim().slice(0, 240),
+        addedAt: new Date().toISOString(),
+        uses: 0,
+    };
+    index.images.push(image);
+    await saveMemeIndex(index);
+    return image;
+}
+
+function findMemes(index, query) {
+    const terms = normalizeTags(query);
+    return index.images
+        .map((image) => {
+            const searchable = normalizeTags([image.clue, ...image.tags].join(","));
+            const matches = terms.filter((term) => searchable.includes(term)).length;
+            const fuzzyMatches = terms.filter((term) =>
+                searchable.some((value) => value.includes(term) || term.includes(value))
+            ).length;
+            return { image, score: matches * 4 + fuzzyMatches + Math.min(image.uses, 3) * 0.1 };
+        })
+        .filter(({ score }) => score > 0)
+        .sort((left, right) => right.score - left.score)
+        .map(({ image, score }) => ({ ...image, score }));
+}
+
+async function deleteMeme(id) {
+    const index = await loadMemeIndex();
+    const image = index.images.find((candidate) => candidate.id === id);
+    if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+    await unlink(`${IMAGE_CACHE_DIR}\\${image.file}`);
+    index.images = index.images.filter((candidate) => candidate.id !== id);
+    await saveMemeIndex(index);
+    return { deleted: id };
+}
 
 function normalizeName(name) {
     const normalized = String(name || "").trim().replace(/\s+/g, "-");
@@ -243,11 +340,21 @@ function escapeHtml(value) {
         .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
 
-function renderHtml(profile, profiles, activeName) {
+function renderHtml(profile, profiles, activeName, memeIndex) {
     const levels = ["off", "subtle", "playful", "feral"];
     const options = profiles.map((name) =>
         `<option value="${escapeHtml(name)}" ${name === activeName ? "selected" : ""}>${escapeHtml(name)}</option>`
     ).join("");
+    const memeCards = memeIndex.images.map((image) => `
+      <article class="meme-card">
+        <img src="/api/meme/image?id=${encodeURIComponent(image.id)}" alt="${escapeHtml(image.clue || image.file)}">
+        <div class="meme-copy">
+          <strong>${escapeHtml(image.clue || "Untitled clue")}</strong>
+          <small>${image.tags.map((tag) => `#${escapeHtml(tag)}`).join(" ") || "No tags yet"}</small>
+        </div>
+        <button class="meme-delete" data-meme-delete="${escapeHtml(image.id)}" title="Delete meme">❌</button>
+      </article>
+    `).join("");
     return `<!doctype html>
 <html data-color-mode="auto">
 <head>
@@ -322,6 +429,17 @@ function renderHtml(profile, profiles, activeName) {
     }
     #importFile { display: none; }
     #delete { width: 104px; min-height: 42px; color: #fff; border-color: #be123c; background: #be123c; }
+    .meme-grid { display: grid; gap: 8px; margin-top: 12px; }
+    .meme-card { display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; align-items: center; gap: 10px;
+      padding: 8px; border: 1px solid var(--lp-border); border-radius: 5px; background: var(--lp-control); }
+    .meme-card img { width: 70px; height: 54px; object-fit: cover; border-radius: 3px; background: #000; }
+    .meme-copy { min-width: 0; }
+    .meme-copy strong, .meme-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meme-copy small { margin-top: 3px; color: var(--lp-muted); }
+    .meme-delete { min-height: 36px; padding: 7px 9px; color: #fff; border-color: #be123c; background: #be123c; }
+    .meme-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 11px; }
+    .meme-fields { display: grid; gap: 7px; }
+    #memeFile { display: none; }
     dialog { width: min(420px, calc(100vw - 32px)); border: 1px solid var(--lp-border); border-radius: 7px;
       color: inherit; background: var(--lp-card); box-shadow: 0 18px 60px #0008; }
     dialog::backdrop { background: #0009; backdrop-filter: blur(2px); }
@@ -343,6 +461,9 @@ function renderHtml(profile, profiles, activeName) {
       button, select, input, a.export, .import { min-width: 0; }
       .level { align-items: flex-start; flex-direction: column; gap: 8px; }
       .meter { width: 100%; }
+      .meme-form { grid-template-columns: minmax(0, 1fr); }
+      .meme-card { grid-template-columns: 54px minmax(0, 1fr) auto; }
+      .meme-card img { width: 54px; height: 44px; }
     }
   </style>
 </head>
@@ -395,6 +516,17 @@ function renderHtml(profile, profiles, activeName) {
       <button class="${profile.images === "often" ? "selected" : ""}" data-reaction="images-on">🖼️ Often</button>
       <button class="${profile.images === "rare" ? "selected" : ""}" data-reaction="images-rare">✨ Rare</button>
       <button class="wide ${profile.images === "never" ? "selected" : ""}" data-reaction="images-off">🚫 No images</button>
+    </div>
+    <div class="meme-form">
+      <div class="meme-fields">
+        <input id="memeClue" maxlength="240" placeholder="Clue: when CI is waiting forever">
+        <input id="memeTags" maxlength="300" placeholder="Tags: ci, waiting, frustration">
+      </div>
+      <button id="addMeme" class="neutral">＋ Add image</button>
+      <input id="memeFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+    </div>
+    <div class="meme-grid">
+      ${memeCards || '<p class="fine">No local memes yet. Add one with a clue and tags.</p>'}
     </div>
   </section>
   <section class="card stats">
@@ -451,6 +583,37 @@ function renderHtml(profile, profiles, activeName) {
   }
   document.querySelector("#profile").addEventListener("change", (event) =>
     run(() => post("/api/profile/switch", { name: event.target.value })));
+
+  const memeFile = document.querySelector("#memeFile");
+  document.querySelector("#addMeme").addEventListener("click", () => memeFile.click());
+  memeFile.addEventListener("change", async () => {
+    if (!memeFile.files.length) return;
+    const file = memeFile.files[0];
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error("Could not read the image."));
+        reader.readAsDataURL(file);
+      });
+      await post("/api/meme/import", {
+        fileName: file.name,
+        mimeType: file.type,
+        dataUrl,
+        clue: document.querySelector("#memeClue").value,
+        tags: document.querySelector("#memeTags").value
+      });
+      location.reload();
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      memeFile.value = "";
+    }
+  });
+  for (const button of document.querySelectorAll("[data-meme-delete]")) {
+    button.addEventListener("click", () =>
+      run(() => post("/api/meme/delete", { id: button.dataset.memeDelete })));
+  }
 
   const importFile = document.querySelector("#importFile");
   document.querySelector("#import").addEventListener("click", () => importFile.click());
@@ -572,11 +735,37 @@ async function startServer() {
                 sendJson(response, await importProfile(body.profile, body.overwrite === true));
                 return;
             }
+            if (request.method === "POST" && url.pathname === "/api/meme/import") {
+                sendJson(response, await addMeme(await readBody(request)));
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/api/meme/delete") {
+                const body = await readBody(request);
+                sendJson(response, await deleteMeme(body.id));
+                return;
+            }
+            if (request.method === "GET" && url.pathname === "/api/meme/image") {
+                const id = url.searchParams.get("id");
+                const image = (await loadMemeIndex()).images.find((candidate) => candidate.id === id);
+                if (!image) {
+                    response.writeHead(404);
+                    response.end("Meme not found.");
+                    return;
+                }
+                response.writeHead(200, {
+                    "Content-Type": image.mimeType,
+                    "Cache-Control": "private, max-age=86400",
+                    "X-Content-Type-Options": "nosniff",
+                });
+                response.end(await readFile(`${IMAGE_CACHE_DIR}\\${image.file}`));
+                return;
+            }
             const profile = await loadProfile();
             const profiles = await listProfiles();
             const activeName = await getActiveName();
+            const memeIndex = await loadMemeIndex();
             response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-            response.end(renderHtml(profile, profiles, activeName));
+            response.end(renderHtml(profile, profiles, activeName, memeIndex));
         } catch (error) {
             response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
             response.end(error instanceof Error ? error.message : "Lolpilot update failed.");
@@ -604,6 +793,21 @@ await joinSession({
                     name: "list_profiles",
                     description: "List saved Lolpilot profiles",
                     handler: async () => ({ active: await getActiveName(), profiles: await listProfiles() }),
+                },
+                {
+                    name: "find_meme",
+                    description: "Find a local meme by clue or tags",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            query: { type: "string", minLength: 1 },
+                            limit: { type: "integer", minimum: 1, maximum: 5 },
+                        },
+                        required: ["query"],
+                    },
+                    handler: async (ctx) => findMemes(await loadMemeIndex(), ctx.input.query)
+                        .slice(0, ctx.input.limit || 1)
+                        .map(({ file, hash, ...image }) => image),
                 },
                 {
                     name: "react",
@@ -646,7 +850,16 @@ await joinSession({
                 const reaction = command === "humor: stop" ? "humor-stop" : command;
                 await saveActiveProfile(applyReaction(await loadProfile(), reaction));
             }
-            return { additionalContext: profileContext(await loadProfile()) };
+            const profile = await loadProfile();
+            const context = [profileContext(profile)];
+            if (profile.images !== "never") {
+                const matches = findMemes(await loadMemeIndex(), input.prompt).slice(0, 1);
+                if (matches.length) {
+                    const meme = matches[0];
+                    context.push(`A matching local meme is available: id=${meme.id}; clue="${meme.clue}"; tags=${meme.tags.join(",")}.`);
+                }
+            }
+            return { additionalContext: context.join(" ") };
         },
     },
 });
