@@ -602,19 +602,13 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         `<option value="${escapeHtml(name)}" ${name === activeName ? "selected" : ""}>${escapeHtml(name)}</option>`
     ).join("");
     const memeCards = memeIndex.images.map((image) => `
-      <article class="meme-card ${image.analysisStatus === "analyzing" ? "analyzing" : ""}">
-        <img src="/api/meme/image?id=${encodeURIComponent(image.id)}" alt="${escapeHtml(image.clue || image.file)}">
-        <div class="meme-copy">
-          <strong>${escapeHtml(image.template || image.clue || "Awaiting analysis")}</strong>
-          <small>${escapeHtml({
-              pending: "Queued for agent analysis",
-              analyzing: "Agent is analyzing…",
-              "needs-review": `Needs review · confidence ${Math.round((image.confidence || 0) * 100)}%`,
-              analyzed: `Analyzed · ${Math.round((image.confidence || 0) * 100)}% confidence · ${image.emotion || "ready"}`,
-          }[image.analysisStatus] || (image.tags || []).join(" · ") || "No tags yet")}</small>
-        </div>
-        <button class="meme-delete" data-meme-delete="${escapeHtml(image.id)}" title="Delete meme">❌</button>
-      </article>
+      <button class="meme-card ${image.analysisStatus === "analyzing" ? "analyzing" : ""}"
+        data-meme-id="${escapeHtml(image.id)}" data-meme='${escapeHtml(JSON.stringify(image))}'>
+        <span class="status-dot status-${escapeHtml(image.analysisStatus)}"
+          title="${escapeHtml(image.analysisStatus)}" aria-label="${escapeHtml(image.analysisStatus)}"></span>
+        <img src="/api/meme/image?id=${encodeURIComponent(image.id)}" alt="${escapeHtml(image.template || image.file)}">
+        <span class="meme-name">${escapeHtml(image.template || "Awaiting analysis")}</span>
+      </button>
     `).join("");
     return `<!doctype html>
 <html data-color-mode="auto">
@@ -703,21 +697,24 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     }
     #importFile { display: none; }
     #delete { width: 104px; min-height: 42px; color: #fff; border-color: #be123c; background: #be123c; }
-    .meme-grid { display: grid; gap: 8px; margin-top: 12px; }
+    .meme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); gap: 10px; margin-top: 12px; }
     .meme-status { min-height: 20px; margin-top: 9px; color: #dc2626; font-weight: 650; }
-    .meme-card { display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; align-items: center; gap: 10px;
-      padding: 8px; border: 1px solid var(--lp-border); border-radius: 5px; background: var(--lp-control); }
-    .meme-card img { width: 70px; height: 54px; object-fit: cover; border-radius: 3px; background: #000; }
-    .meme-copy { min-width: 0; }
-    .meme-copy strong, .meme-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .meme-copy small { margin-top: 3px; color: var(--lp-muted); }
+    .meme-card { position: relative; display: block; min-width: 0; padding: 0; overflow: hidden; text-align: left;
+      border: 1px solid var(--lp-border); border-radius: 5px; background: var(--lp-control); }
+    .meme-card:hover { outline: 2px solid #8b5cf6; outline-offset: 1px; }
+    .meme-card img { display: block; width: 100%; aspect-ratio: 1 / .72; object-fit: cover; background: #000; }
+    .meme-name { display: block; overflow: hidden; padding: 8px 9px; text-overflow: ellipsis; white-space: nowrap; }
+    .status-dot { position: absolute; z-index: 1; top: 7px; right: 7px; width: 13px; height: 13px;
+      border: 2px solid white; border-radius: 50%; box-shadow: 0 1px 4px #0008; }
+    .status-analyzed { background: #22c55e; }
+    .status-needs-review { background: #eab308; }
+    .status-analyzing { background: #3b82f6; animation: statusBlink 1.2s ease-in-out infinite; }
+    .status-pending { background: #f97316; }
     .meme-card.analyzing { animation: analysisPulse 2.4s ease-in-out infinite; }
-    .meme-card.analyzing .meme-copy small::before { content: ""; display: inline-block; width: 6px; height: 6px;
-      margin-right: 6px; border-radius: 50%; background: #8b5cf6; vertical-align: 1px; animation: statusBlink 1.2s ease-in-out infinite; }
     @keyframes analysisPulse { 50% { border-color: #8b5cf6; box-shadow: 0 0 0 2px #8b5cf622; } }
     @keyframes statusBlink { 50% { opacity: .25; transform: scale(.75); } }
     @media (prefers-reduced-motion: reduce) {
-      .meme-card.analyzing, .meme-card.analyzing .meme-copy small::before { animation: none; }
+      .meme-card.analyzing, .status-analyzing { animation: none; }
     }
     .meme-delete { min-height: 36px; padding: 7px 9px; color: #fff; border-color: #be123c; background: #be123c; }
     .meme-actions { position: relative; margin-top: 11px; }
@@ -730,10 +727,18 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .library-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
     .library-summary button { min-width: 150px; }
     .library-page { display: none; }
+    body.library-open main { max-width: none; }
+    body.library-open > main > .brand, body.library-open > main > .profile-card { display: none; }
     body.library-open .control-page { display: none; }
     body.library-open .library-page { display: block; }
+    body.library-open .library-page > .card { margin: 0; }
     .library-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
     .library-header h2 { margin: 0; flex: 1; }
+    .meme-detail { max-width: min(620px, calc(100vw - 28px)); }
+    .meme-detail img { display: block; width: 100%; max-height: 55vh; object-fit: contain; border-radius: 5px; background: #000; }
+    .meme-detail dl { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 7px 12px; }
+    .meme-detail dt { color: var(--lp-muted); }
+    .meme-detail dd { margin: 0; overflow-wrap: anywhere; }
     dialog { width: min(420px, calc(100vw - 32px)); border: 1px solid var(--lp-border); border-radius: 7px;
       color: inherit; background: var(--lp-card); box-shadow: 0 18px 60px #0008; }
     dialog::backdrop { background: #0009; backdrop-filter: blur(2px); }
@@ -756,8 +761,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       .level { align-items: flex-start; flex-direction: column; gap: 8px; }
       .meter { width: 100%; }
       .add-menu { grid-template-columns: 1fr; }
-      .meme-card { grid-template-columns: 54px minmax(0, 1fr) auto; }
-      .meme-card img { width: 54px; height: 44px; }
+      .meme-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
 </head>
@@ -863,6 +867,16 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     </section>
   </div>
 
+  <dialog id="memeDetail" class="meme-detail">
+    <img id="detailImage" alt="">
+    <h2 id="detailTitle"></h2>
+    <dl id="detailData"></dl>
+    <div class="dialog-actions">
+      <button type="button" id="closeMemeDetail">Close</button>
+      <button type="button" id="deleteMeme" class="meme-delete">Delete</button>
+    </div>
+  </dialog>
+
   <dialog id="createDialog">
     <form id="createForm" method="dialog">
       <h2>Create profile</h2>
@@ -886,8 +900,17 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
 </main>
 <script>
   const status = document.querySelector("#status");
-  document.querySelector("#openLibrary").addEventListener("click", () => document.body.classList.add("library-open"));
-  document.querySelector("#closeLibrary").addEventListener("click", () => document.body.classList.remove("library-open"));
+  const libraryMode = new URLSearchParams(location.search).has("view") &&
+    new URLSearchParams(location.search).get("view") === "library";
+  if (libraryMode) document.body.classList.add("library-open");
+  document.querySelector("#openLibrary").addEventListener("click", () => {
+    history.replaceState(null, "", "?view=library");
+    document.body.classList.add("library-open");
+  });
+  document.querySelector("#closeLibrary").addEventListener("click", () => {
+    history.replaceState(null, "", location.pathname);
+    document.body.classList.remove("library-open");
+  });
   async function post(path, body) {
     const response = await fetch(path, {
       method: "POST",
@@ -915,7 +938,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   async function importMemeResult(result) {
     status.textContent = "Imported. Agent analysis will run next.";
     await post("/api/meme/analyze", { id: result.id });
-    location.reload();
+    location.assign("?view=library");
   }
 
   const memeFile = document.querySelector("#memeFile");
@@ -987,10 +1010,38 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     if (file) await importMemeFile(file);
     else memeStatus.textContent = "Drop a PNG, JPEG, GIF, or WebP image.";
   });
-  for (const button of document.querySelectorAll("[data-meme-delete]")) {
-    button.addEventListener("click", () =>
-      run(() => post("/api/meme/delete", { id: button.dataset.memeDelete })));
+  const memeDetail = document.querySelector("#memeDetail");
+  const deleteMemeButton = document.querySelector("#deleteMeme");
+  let selectedMeme;
+  for (const button of document.querySelectorAll("[data-meme-id]")) {
+    button.addEventListener("click", () => {
+      selectedMeme = JSON.parse(button.dataset.meme);
+      const image = document.querySelector("#detailImage");
+      image.src = "/api/meme/image?id=" + encodeURIComponent(selectedMeme.id);
+      image.alt = selectedMeme.template || selectedMeme.file;
+      document.querySelector("#detailTitle").textContent = selectedMeme.template || "Awaiting analysis";
+      const rows = [
+        ["Status", selectedMeme.analysisStatus],
+        ["Confidence", selectedMeme.confidence ? Math.round(selectedMeme.confidence * 100) + "%" : "—"],
+        ["Emotion", selectedMeme.emotion || "—"],
+        ["Tone", (selectedMeme.tone || []).join(", ") || "—"],
+        ["Tags", (selectedMeme.tags || []).join(", ") || "—"],
+        ["Description", selectedMeme.visualDescription || "—"],
+        ["Source", selectedMeme.source || "local-import"],
+      ];
+      document.querySelector("#detailData").replaceChildren(...rows.flatMap(([label, value]) => {
+        const dt = document.createElement("dt");
+        const dd = document.createElement("dd");
+        dt.textContent = label;
+        dd.textContent = value;
+        return [dt, dd];
+      }));
+      memeDetail.showModal();
+    });
   }
+  document.querySelector("#closeMemeDetail").addEventListener("click", () => memeDetail.close());
+  deleteMemeButton.addEventListener("click", () =>
+    selectedMeme && run(() => post("/api/meme/delete", { id: selectedMeme.id })));
 
   const importFile = document.querySelector("#importFile");
   document.querySelector("#import").addEventListener("click", () => importFile.click());
