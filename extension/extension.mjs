@@ -446,7 +446,13 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       const response = await fetch("/api/memes/status", { cache: "no-store" });
       if (!response.ok) return;
       const state = await response.json();
-      if (memeSignature && state.signature !== memeSignature) location.assign("?view=library");
+      if (memeSignature && state.signature !== memeSignature) {
+        const params = new URLSearchParams();
+        params.set("view", "library");
+        if (statusFilter.value !== "all") params.set("status", statusFilter.value);
+        if (memeSearch.value) params.set("q", memeSearch.value);
+        location.assign("?" + params.toString());
+      }
       memeSignature = state.signature;
     } catch {
       // A transient panel reload is not a user-facing error.
@@ -488,6 +494,10 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     sortMemeCards();
   });
   sortMemeCards();
+  filterLibrary();
+  const initialParams = new URLSearchParams(location.search);
+  if (initialParams.has("status")) statusFilter.value = initialParams.get("status");
+  if (initialParams.has("q")) memeSearch.value = initialParams.get("q");
   filterLibrary();
   if (libraryMode) {
     refreshMemeStatus();
