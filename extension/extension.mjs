@@ -823,12 +823,10 @@ function applyReaction(profile, reaction, turnStyles = []) {
     const next = { ...profile, lastReaction: reaction };
     switch (reaction) {
         case "trafione":
-            next.level = Math.min(4, next.level + 1);
             next.hits += 1;
             next.styleScores = adjustStyleScores(next.styleScores, turnStyles, 1);
             break;
         case "meh":
-            next.level = Math.max(0, next.level - 1);
             next.misses += 1;
             next.styleScores = adjustStyleScores(next.styleScores, turnStyles, -1);
             break;
