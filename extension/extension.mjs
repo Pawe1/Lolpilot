@@ -32,7 +32,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         data-status="${escapeHtml(image.analysisStatus)}"
         data-meme-id="${escapeHtml(image.id)}" data-meme='${escapeHtml(JSON.stringify(image))}'>
         <span class="status-dot status-${escapeHtml(image.analysisStatus)}"
-          title="${escapeHtml(image.analysisStatus)}" aria-label="${escapeHtml(image.analysisStatus)}"></span>
+          title="${escapeHtml(image.duplicateOf ? "Duplicate decision" : image.analysisStatus)}"
+          aria-label="${escapeHtml(image.duplicateOf ? "Duplicate decision" : image.analysisStatus)}"></span>
         <img src="/api/meme/image?id=${encodeURIComponent(image.id)}" alt="${escapeHtml(image.template || image.file)}">
         <span class="meme-name">${escapeHtml(image.template || "Awaiting analysis")}</span>
       </button>
@@ -352,7 +353,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <select id="statusFilter">
         <option value="all">All</option>
         <option value="analyzed">🟢 Analyzed</option>
-        <option value="needs-review">🟡 Needs review</option>
+        <option value="needs-review">🟡 Needs review / duplicate</option>
         <option value="analyzing">🔵 Analyzing</option>
         <option value="pending">🟠 Pending</option>
       </select>
@@ -654,7 +655,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       replaceMemeButton.hidden = !selectedMeme.duplicateOf;
       replaceMemeButton.textContent = selectedMeme.replacementSuggested ? "Replace existing" : "Keep both";
       const rows = [
-        ["Status", selectedMeme.analysisStatus],
+        ["Status", selectedMeme.duplicateOf ? "Duplicate decision" : selectedMeme.analysisStatus],
         ["Confidence", selectedMeme.confidence ? Math.round(selectedMeme.confidence * 100) + "%" : "—"],
         ["Emotion", selectedMeme.emotion || "—"],
         ["Tone", (selectedMeme.tone || []).join(", ") || "—"],
