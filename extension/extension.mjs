@@ -563,8 +563,13 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
 
   async function importMemeResult(result) {
     status.textContent = "Imported. Agent analysis will run next.";
+    const params = new URLSearchParams(location.search);
+    params.set("view", "library");
+    if (statusFilter.value !== "all") params.set("status", statusFilter.value);
+    if (memeSearch.value) params.set("q", memeSearch.value);
+    params.set("addOpen", "1");
     await post("/api/meme/analyze", { id: result.id });
-    location.assign("?view=library");
+    location.assign("?" + params.toString());
   }
 
   const memeFile = document.querySelector("#memeFile");
@@ -572,6 +577,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   const addButton = document.querySelector("#addMeme");
   const addMenu = document.querySelector("#addMenu");
   addButton.addEventListener("click", () => addMenu.classList.toggle("open"));
+  if (new URLSearchParams(location.search).get("addOpen") === "1") addMenu.classList.add("open");
   document.querySelector("#addFile").addEventListener("click", () => memeFile.click());
   document.querySelector("#addUrl").addEventListener("click", async () => {
     const url = prompt("Paste an image URL (PNG, JPEG, GIF, or WebP):");
