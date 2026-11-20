@@ -283,7 +283,7 @@ function renderHtml(profile, profiles, activeName) {
     .eyebrow { color: #8b5cf6; font-size: 11px; font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
     .level { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 8px; }
     .level-name { min-width: 74px; font-size: 21px; font-weight: 750; text-transform: capitalize; }
-    .meter { flex: 1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .meter { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
     .bar { height: 10px; border: 1px solid var(--lp-border); border-radius: 3px; background: var(--lp-control); }
     .bar.on { border-color: transparent; background: linear-gradient(90deg, #f97316, #ec4899); }
     .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; margin-top: 13px; }
@@ -373,7 +373,7 @@ function renderHtml(profile, profiles, activeName) {
     <div class="eyebrow">Humor engine</div>
     <div class="level">
       <div class="level-name">${escapeHtml(levels[profile.level])}</div>
-      <div class="meter">${levels.map((_, index) => `<div class="bar ${index <= profile.level ? "on" : ""}"></div>`).join("")}</div>
+      <div class="meter">${levels.slice(1).map((_, index) => `<div class="bar ${index < profile.level ? "on" : ""}"></div>`).join("")}</div>
       <strong>${profile.level}/3</strong>
     </div>
     <div class="buttons">
