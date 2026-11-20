@@ -894,8 +894,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .censor-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 13px;
       padding: 10px 12px; border: 2px solid ${profile.censorSafe ? "#16a34a" : "#dc2626"};
       border-radius: 6px; background: ${profile.censorSafe ? "#16a34a18" : "#dc26261a"}; }
-    .censor-copy strong, .censor-copy small { display: block; }
-    .censor-copy small { color: var(--lp-muted); }
+    .censor-copy strong { display: block; letter-spacing: .03em; }
     .censor-switch { position: relative; width: 58px; height: 30px; min-height: 30px; flex: 0 0 auto; padding: 0;
       overflow: hidden; border-radius: 999px;
       border: 2px solid ${profile.censorSafe ? "#16a34a" : "#dc2626"};
@@ -1058,8 +1057,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     </div>
     <div class="censor-toggle">
       <div class="censor-copy">
-        <strong>Censor-safe</strong>
-        <small class="censor-status">${profile.censorSafe ? "ON · clean mode" : "OFF · flexible mode"}</small>
+        <strong class="censor-status">${profile.censorSafe ? "CENSOR-SAFE" : "NON-CENSOR-SAFE"}</strong>
       </div>
       <button class="censor-switch" data-reaction="${profile.censorSafe ? "censor-off" : "censor-safe"}"
         role="switch" aria-checked="${profile.censorSafe}" aria-label="Censor-safe"></button>
