@@ -359,6 +359,9 @@ export function curatorPrompt(image) {
         "You are Lolpilot Meme Curator, a specialist in meme templates, visual reactions, pop culture, workplace humor, software engineering, and internet culture.",
         "Do not modify the Lolpilot extension or repository code.",
         `Inspect the local image at "${IMAGE_CACHE_DIR}\\${image.file}" with vision.`,
+        image.analysisHint
+            ? `The user suggested this identity hint: "${String(image.analysisHint).replaceAll('"', "'")}". Treat it as a hypothesis to verify, not a fact.`
+            : "",
         "Identify the common template name if recognizable; otherwise use Unknown template.",
         "Describe only visual evidence. Do not infer sensitive personal traits, identity, health, or ownership.",
         "Write exactly one JSON object to this absolute output path:",
@@ -390,12 +393,12 @@ export function findCopilotCli() {
     return null;
 }
 
-export async function analyzeMeme(id) {
+export async function analyzeMeme(id, hint = "") {
     const index = await loadMemeIndex();
     const image = index.images.find((candidate) => candidate.id === id);
     if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
     if (image.analysisStatus === "analyzing") return image;
-    await updateMeme(id, { analysisStatus: "analyzing" });
+    await updateMeme(id, { analysisStatus: "analyzing", analysisHint: String(hint || "").slice(0, 500) });
     const cli = findCopilotCli();
     if (!cli) {
         await updateMeme(id, {
@@ -408,7 +411,7 @@ export async function analyzeMeme(id) {
         if (analysisWorkers.has(id)) return { ...image, analysisStatus: "analyzing" };
         const child = execFile("node", [
             cli,
-            `--prompt=${curatorPrompt(image)}`,
+            `--prompt=${curatorPrompt({ ...image, analysisHint: hint || image.analysisHint })}`,
             "--silent",
             "--allow-all-tools",
             "--trust-folder",

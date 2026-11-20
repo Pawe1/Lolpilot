@@ -819,7 +819,7 @@ async function startServer() {
             }
             if (request.method === "POST" && url.pathname === "/api/meme/analyze") {
                 const body = await readBody(request);
-                sendJson(response, await analyzeMeme(body.id));
+                sendJson(response, await analyzeMeme(body.id, body.hint || ""));
                 return;
             }
             if (request.method === "GET" && url.pathname === "/api/memes/status") {
@@ -897,6 +897,11 @@ async function startPreviewServer(_instanceId, image, caption = "") {
                 response.end("Invalid rating.");
                 return;
             }
+            if (url.pathname === "/analyze" && request.method === "POST") {
+                const body = await readBody(request);
+                sendJson(response, await analyzeMeme(image.id, body.hint || ""));
+                return;
+            }
             const index = await loadMemeIndex();
             const current = index.images.find((candidate) => candidate.id === image.id);
             if (current) {
@@ -941,12 +946,20 @@ async function startPreviewServer(_instanceId, image, caption = "") {
     color:#111827; background:#fff; font:700 14px var(--font-sans,Segoe UI,sans-serif); cursor:pointer; }
   #hit, #miss { background:#fff; border-color:#d1d5db; }
   .feedback button.selected { outline:3px solid #8b5cf6; outline-offset:1px; }
+  .identity-hint { display:grid; gap:8px; margin-top:12px; }
+  .identity-hint textarea { min-height:64px; resize:vertical; border:1px solid #cbd5e1; border-radius:5px;
+    padding:9px 10px; font:14px var(--font-sans,Segoe UI,sans-serif); }
+  .identity-hint button { min-height:38px; border:1px solid #cbd5e1; border-radius:5px; background:#fff; color:#111827; font-weight:700; }
 </style></head><body>
 <main>
   <canvas id="preview" aria-label="${escapeHtml(image.template || "Meme editor")}"></canvas>
   <div class="feedback">
     <button id="miss" aria-label="Meh">👎</button>
     <button id="hit" aria-label="Hit">👍</button>
+  </div>
+  <div class="identity-hint">
+    <textarea id="identityHint" placeholder="Suggest template identity or context…"></textarea>
+    <button id="suggestIdentity">Suggest identity and re-analyze</button>
   </div>
 </main>
 <script>
@@ -1015,6 +1028,19 @@ async function rate(value) {
 }
 document.querySelector("#hit").addEventListener("click", () => rate("hit"));
 document.querySelector("#miss").addEventListener("click", () => rate("miss"));
+document.querySelector("#suggestIdentity").addEventListener("click", async () => {
+  const hint = document.querySelector("#identityHint").value.trim();
+  if (!hint) return;
+  const response = await fetch("/analyze", {
+    method:"POST",
+    headers: {"content-type":"application/json"},
+    body: JSON.stringify({ hint })
+  });
+  if (response.ok) {
+    document.querySelector("#suggestIdentity").textContent = "Re-analyzing…";
+    setTimeout(() => location.reload(), 1200);
+  }
+});
 canvas.addEventListener("click", () => {
   document.body.innerHTML = "";
   document.body.className = "idle";
