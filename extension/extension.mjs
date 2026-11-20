@@ -984,7 +984,9 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     dialog::backdrop { background: #0009; backdrop-filter: blur(2px); }
     dialog h2 { margin: 0 0 8px; font-size: 18px; }
     dialog p { color: var(--lp-muted); }
-    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+    .dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+    .meme-detail .dialog-actions { justify-content: space-between; }
+    .meme-detail .dialog-actions #deleteMeme { margin-right: auto; order: -1; }
     .dialog-actions button { min-width: 90px; }
     button:disabled { cursor: not-allowed; opacity: .55; }
     @media (max-width: 340px) {
@@ -1385,6 +1387,9 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   const deleteMemeButton = document.querySelector("#deleteMeme");
   const replaceMemeButton = document.querySelector("#replaceMeme");
   let selectedMeme;
+  memeDetail.addEventListener("click", (event) => {
+    if (event.target === memeDetail) memeDetail.close();
+  });
   for (const button of document.querySelectorAll("[data-meme-id]")) {
     button.addEventListener("click", () => {
       selectedMeme = JSON.parse(button.dataset.meme);
