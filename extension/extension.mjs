@@ -19,6 +19,7 @@ const MEME_INDEX_PATH = `${ROOT}\\cache\\meme-index.json`;
 const ANALYSIS_DIR = `${ROOT}\\cache\\analysis`;
 const servers = new Map();
 const previewServers = new Map();
+let pendingPrMeme = null;
 const execFileAsync = promisify(execFile);
 const analysisWorkers = new Map();
 const MAX_ANALYSIS_WORKERS = 3;
@@ -41,6 +42,7 @@ const defaultProfile = {
     misses: 0,
     ratedTurnId: "",
     styleScores: {},
+    suggestPrMemes: false,
 };
 
 async function loadMemeIndex() {
@@ -655,6 +657,7 @@ function parseProfile(text) {
         misses: number("Misses", 0),
         ratedTurnId: value("Rated turn", ""),
         styleScores: parseStyleScores(value("Learned humor", "{}")),
+        suggestPrMemes: value("Suggest memes in PRs", "false") === "true",
     };
 }
 
@@ -674,6 +677,7 @@ function profileMarkdown(profile) {
 - Misses: ${profile.misses}
 - Rated turn: ${profile.ratedTurnId}
 - Learned humor: ${learnedHumor}
+- Suggest memes in PRs: ${profile.suggestPrMemes}
 - Style: concise, playful, technically precise
 - Never joke in commits, security findings, production incidents, or when safety is at stake
 `;
@@ -690,6 +694,7 @@ function normalizeProfile(profile) {
         misses: Math.max(0, Number(profile.misses) || 0),
         ratedTurnId: String(profile.ratedTurnId || ""),
         styleScores: normalizeStyleScores(profile.styleScores),
+        suggestPrMemes: profile.suggestPrMemes === true,
     };
 }
 
@@ -851,6 +856,12 @@ function applyReaction(profile, reaction, turnStyles = []) {
         case "censor-off":
             next.censorSafe = false;
             break;
+        case "pr-memes-on":
+            next.suggestPrMemes = true;
+            break;
+        case "pr-memes-off":
+            next.suggestPrMemes = false;
+            break;
         default:
             throw new CanvasError("invalid_reaction", `Unknown reaction: ${reaction}`);
     }
@@ -884,6 +895,36 @@ function profileContext(profile) {
             : "Censor-safe mode is off; do not force profanity or spicy language. Choose whatever tone fits the joke, while still avoiding slurs and harassment.",
         "Prefer an image or meme only when image preference allows it and the image materially improves the response.",
     ].join("; ");
+}
+
+function suggestPrMeme(prompt, profile) {
+    const text = String(prompt || "").toLowerCase();
+    if (!/\b(pr|pull request|merge request)\b/.test(text)) return null;
+    const isReview = /\b(review|riwju|code review|sprawdź|sprawdz|zreviewuj)\b/.test(text);
+    const isOwn = /\b(create|open|prepare|submit|mojego|mój|my)\b/.test(text);
+    if (!profile.suggestPrMemes) return null;
+    if (isReview && profile.level < 4) return null;
+    if (!isReview && !isOwn) return null;
+    const suggestions = [
+        { tags: ["refactor", "cleanup"], caption: "PR: trzy linijki zmiany, czternaście komentarzy o architekturze wszechświata" },
+        { tags: ["fix", "bug", "ci"], caption: "Naprawiono jeden bug. Pozostałe stworzyły nową partię roboczą." },
+        { tags: ["review", "comments"], caption: "Reviewer: małe pytanko / PR: kompletna rozprawa" },
+        { tags: ["test", "tests"], caption: "Testy dodane. Nadzieja też." },
+    ];
+    const matched = suggestions.find((item) => item.tags.some((tag) => text.includes(tag)))
+        || { tags: [], caption: "Kolejny PR. Trzydziesta minuta spotkania nr 1." };
+    return { prompt: prompt.slice(0, 500), caption: matched.caption, tags: matched.tags };
+}
+
+function prMemeInstructions() {
+    if (!pendingPrMeme) return "";
+    return [
+        "Lolpilot detected a PR review meme suggestion.",
+        `Suggested caption: ${pendingPrMeme.caption}`,
+        "Use this only at humor level 4/4 and only after the substantive review findings, as an optional P.S. suggestion at the very end.",
+        "Never mix the meme into a blocking finding or security/reliability result.",
+        "Do not upload, attach, or publish any meme to GitHub without explicit user confirmation in this turn.",
+    ].join(" ");
 }
 
 function escapeHtml(value) {
@@ -976,6 +1017,9 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .censor-switch::after { content: ""; position: absolute; top: 3px; left: ${profile.censorSafe ? "29px" : "3px"};
       width: 20px; height: 20px; border-radius: 50%; background: white; transition: left .15s ease; }
     .censor-status { font-weight: 800; color: ${profile.censorSafe ? "#16a34a" : "#dc2626"}; }
+    .pr-memes { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px;
+      padding:10px 12px; border:1px solid var(--lp-border); border-radius:6px; background:var(--lp-control); }
+    .pr-memes input { width:20px; min-height:20px; accent-color:#7c3aed; }
     button.wide { grid-column: 1 / -1; }
     .profile-card { padding: 12px 14px; }
     .profile-label { display: block; margin-bottom: 5px; color: var(--lp-muted); font-size: 11px;
@@ -1138,6 +1182,10 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <button class="censor-switch" data-reaction="${profile.censorSafe ? "censor-off" : "censor-safe"}"
         role="switch" aria-checked="${profile.censorSafe}" aria-label="Censor-safe"></button>
     </div>
+    <label class="pr-memes">
+      <span><strong>Suggest memes in PRs</strong></span>
+      <input id="prMemes" type="checkbox" ${profile.suggestPrMemes ? "checked" : ""}>
+    </label>
   </section>
   <section class="card react-card">
     <div class="eyebrow">React to the last answer</div>
@@ -1379,6 +1427,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       turnId: currentTurnId,
     })));
   }
+  document.querySelector("#prMemes").addEventListener("change", (event) =>
+    run(() => post("/api/reaction", { reaction: event.target.checked ? "pr-memes-on" : "pr-memes-off" })));
   document.querySelector("#profile").addEventListener("change", (event) =>
     run(() => post("/api/profile/switch", { name: event.target.value })));
 
@@ -1754,10 +1804,10 @@ async function startPreviewServer(_instanceId, image, caption = "") {
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(image.template || "Lolpilot meme")}</title>
 <style>
-  body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--background-color-default,#0f172a);
+  body { margin:0; min-height:100vh; overflow:auto; background:var(--background-color-default,#0f172a);
     color:var(--text-color-default,#f8fafc); font-family:var(--font-sans,Segoe UI,sans-serif); }
-  main { width:min(100%, 720px); padding:12px; }
-  canvas { display:block; width:100%; max-height:calc(100vh - 220px); object-fit:contain; background:#000; }
+  main { width:min(100%, 720px); margin:0 auto; padding:12px; }
+  canvas { display:block; width:100%; height:auto; max-height:none; object-fit:contain; background:#000; }
   body.idle {
     background: linear-gradient(120deg, #f8fafc, #d1d5db, #f8fafc) !important;
     background-size: 220% 220%;
@@ -1775,7 +1825,6 @@ async function startPreviewServer(_instanceId, image, caption = "") {
   #hit, #miss { background:#fff; border-color:#d1d5db; }
   .feedback button.selected { outline:3px solid #8b5cf6; outline-offset:1px; }
   .editor-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-  #dismiss { margin-top:2px; }
 </style></head><body>
 <main>
   <canvas id="preview" aria-label="${escapeHtml(image.template || "Meme editor")}"></canvas>
@@ -1791,7 +1840,6 @@ async function startPreviewServer(_instanceId, image, caption = "") {
     <button id="miss" aria-label="Meh">👎</button>
     <button id="hit" aria-label="Hit">👍</button>
   </div>
-  <button id="dismiss">Dismiss preview</button>
   <small>Preview stays local · PNG export is generated in your browser</small>
 </main>
 <script>
@@ -1873,7 +1921,7 @@ document.querySelector("#download").addEventListener("click", () => {
   link.href = canvas.toDataURL("image/png");
   link.click();
 });
-document.querySelector("#dismiss").addEventListener("click", () => {
+canvas.addEventListener("click", () => {
   document.body.innerHTML = "";
   document.body.className = "idle";
   document.body.style.setProperty("background", "linear-gradient(120deg, #f8fafc, #d1d5db, #f8fafc)", "important");
@@ -1901,6 +1949,11 @@ const session = await joinSession({
                     name: "get_profile",
                     description: "Read the active Lolpilot profile",
                     handler: async () => ({ name: await getActiveName(), ...await loadProfile() }),
+                },
+                {
+                    name: "get_pr_meme_suggestion",
+                    description: "Read the pending opt-in meme suggestion for a pull request",
+                    handler: async () => pendingPrMeme || { available: false },
                 },
                 {
                     name: "list_profiles",
@@ -1935,7 +1988,7 @@ const session = await joinSession({
                         properties: {
                             reaction: {
                                 type: "string",
-                                enum: ["trafione", "meh", "humor+", "humor-", "humor-stop", "images-on", "images-rare", "images-off", "censor-safe", "censor-off"],
+                                enum: ["trafione", "meh", "humor+", "humor-", "humor-stop", "images-on", "images-rare", "images-off", "censor-safe", "censor-off", "pr-memes-on", "pr-memes-off"],
                             },
                         },
                         required: ["reaction"],
@@ -2007,6 +2060,9 @@ const session = await joinSession({
                 await saveActiveProfile(applyReaction(await loadProfile(), reaction));
             }
             const profile = await loadProfile();
+            const prSuggestion = suggestPrMeme(input.prompt, profile);
+            if (prSuggestion) pendingPrMeme = prSuggestion;
+            else pendingPrMeme = null;
             const context = [profileContext(profile)];
             if (profile.images !== "never") {
                 const matches = findMemes(await loadMemeIndex(), input.prompt).slice(0, 1);
@@ -2022,6 +2078,8 @@ const session = await joinSession({
                     }
                 }
             }
+            const prContext = prMemeInstructions();
+            if (prContext) context.push(prContext);
             return { additionalContext: context.join(" ") };
         },
     },
