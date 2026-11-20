@@ -1260,8 +1260,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   }
   statusFilter.addEventListener("change", filterLibrary);
   memeSearch.addEventListener("input", filterLibrary);
-  sortMemes.addEventListener("click", () => {
-    newestFirst = !newestFirst;
+  function sortMemeCards() {
     sortMemes.textContent = newestFirst ? "▼ Newest" : "▲ Oldest";
     const grid = document.querySelector(".meme-grid");
     const cards = [...grid.querySelectorAll("[data-meme-id]")];
@@ -1271,7 +1270,12 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       return newestFirst ? b - a : a - b;
     });
     cards.forEach((card) => grid.appendChild(card));
+  }
+  sortMemes.addEventListener("click", () => {
+    newestFirst = !newestFirst;
+    sortMemeCards();
   });
+  sortMemeCards();
   filterLibrary();
   if (libraryMode) {
     refreshMemeStatus();
