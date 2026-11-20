@@ -586,7 +586,7 @@ function parseProfile(text) {
         return match?.[1]?.trim() || fallback;
     };
     return {
-        level: Math.max(0, Math.min(3, Number.parseInt(value("Level", "2/3"), 10))),
+        level: Math.max(0, Math.min(4, Number.parseInt(value("Level", "2/4"), 10))),
         images: value("Images", "rare"),
         censorSafe: value("Censor-safe", "true").toLowerCase() !== "false",
         lastReaction: value("Last reaction", "none"),
@@ -599,7 +599,7 @@ function profileMarkdown(profile) {
     return `# Lolpilot profile
 
 - Owner: PC
-- Level: ${profile.level}/3
+- Level: ${profile.level}/4
 - Images: ${profile.images}
 - Censor-safe: ${profile.censorSafe}
 - Last reaction: ${profile.lastReaction}
@@ -612,7 +612,7 @@ function profileMarkdown(profile) {
 
 function normalizeProfile(profile) {
     return {
-        level: Math.max(0, Math.min(3, Number(profile.level ?? defaultProfile.level))),
+        level: Math.max(0, Math.min(4, Number(profile.level ?? defaultProfile.level))),
         images: ["rare", "often", "never"].includes(profile.images) ? profile.images : defaultProfile.images,
         censorSafe: profile.censorSafe !== false,
         lastReaction: String(profile.lastReaction || "none"),
@@ -746,7 +746,7 @@ function applyReaction(profile, reaction) {
     const next = { ...profile, lastReaction: reaction };
     switch (reaction) {
         case "trafione":
-            next.level = Math.min(3, next.level + 1);
+            next.level = Math.min(4, next.level + 1);
             next.hits += 1;
             break;
         case "meh":
@@ -754,7 +754,7 @@ function applyReaction(profile, reaction) {
             next.misses += 1;
             break;
         case "humor+":
-            next.level = Math.min(3, next.level + 1);
+            next.level = Math.min(4, next.level + 1);
             break;
         case "humor-":
             next.level = Math.max(0, next.level - 1);
@@ -784,6 +784,13 @@ function applyReaction(profile, reaction) {
 }
 
 function profileContext(profile) {
+    const humorDirection = [
+        "Humor is off; remain straightforward.",
+        "Use subtle, mostly situational humor.",
+        "Use clear, playful, safe humor.",
+        "Use abstract, absurd, sharp, cutting humor in ordinary conversation and technical answers. Deliver at least one strong punchline when the topic allows it; remain contextual, not offensive.",
+        "Use black, cynical, grotesque humor with an edgy edge in ordinary conversation and technical answers. Make the tone visibly darker and more uncomfortable, but never target protected groups, real victims, the user, or current real-world tragedies.",
+    ][profile.level];
     return [
         "Lolpilot profile:",
         "This is user-facing chat. Respond normally in the user's language; never return a meme metadata JSON object.",
@@ -791,6 +798,7 @@ function profileContext(profile) {
         `image preference: ${profile.images}`,
         `censor-safe mode: ${profile.censorSafe ? "on" : "off"}`,
         `last reaction: ${profile.lastReaction}`,
+        humorDirection,
         "Be concise and technically precise. Never let humor obscure findings, risks, safety, or commits.",
         profile.censorSafe
             ? "Keep profanity, sexual references, slurs, and graphic language out of humor."
@@ -805,7 +813,7 @@ function escapeHtml(value) {
 }
 
 function renderHtml(profile, profiles, activeName, memeIndex) {
-    const levels = ["off", "subtle", "playful", "feral"];
+    const levels = ["off", "subtle", "playful", "absurd + sharp", "dark / edgy"];
     const options = profiles.map((name) =>
         `<option value="${escapeHtml(name)}" ${name === activeName ? "selected" : ""}>${escapeHtml(name)}</option>`
     ).join("");
@@ -854,9 +862,10 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .eyebrow { color: #8b5cf6; font-size: 11px; font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
     .level { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 8px; }
     .level-name { min-width: 74px; font-size: 21px; font-weight: 750; text-transform: capitalize; }
-    .meter { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .meter { flex: 1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
     .bar { height: 10px; border: 1px solid var(--lp-border); border-radius: 3px; background: var(--lp-control); }
     .bar.on { border-color: transparent; background: linear-gradient(90deg, #f97316, #ec4899); }
+    .bar.dark-on { border-color: #000; background: #000; box-shadow: 0 0 0 1px #6b7280 inset; }
     .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; margin-top: 13px; }
     button, select, input { min-height: 42px; border: 1px solid var(--lp-border); border-radius: 5px;
       color: inherit; background: var(--lp-control); font: inherit; }
@@ -1013,8 +1022,10 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     <div class="eyebrow">Humor engine</div>
     <div class="level">
       <div class="level-name">${escapeHtml(levels[profile.level])}</div>
-      <div class="meter">${levels.slice(1).map((_, index) => `<div class="bar ${index < profile.level ? "on" : ""}"></div>`).join("")}</div>
-      <strong>${profile.level}/3</strong>
+      <div class="meter">${levels.slice(1).map((_, index) =>
+        `<div class="bar ${index < profile.level ? (index === 3 ? "dark-on" : "on") : ""}"></div>`
+      ).join("")}</div>
+      <strong>${profile.level}/4</strong>
     </div>
     <div class="buttons">
       <button class="cool" data-reaction="humor-">🧊 Dial it down</button>
