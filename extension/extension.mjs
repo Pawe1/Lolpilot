@@ -1,6 +1,8 @@
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { promisify } from "node:util";
@@ -17,8 +19,7 @@ const MEME_INDEX_PATH = `${ROOT}\\cache\\meme-index.json`;
 const ANALYSIS_DIR = `${ROOT}\\cache\\analysis`;
 const servers = new Map();
 const execFileAsync = promisify(execFile);
-const CURATOR_NAME = "Lolpilot Meme Curator";
-let curatorSessionId;
+const analysisWorkers = new Map();
 let BUILD_ID = "working-tree";
 try {
     const { stdout } = await execFileAsync("git", ["-C", ROOT, "rev-parse", "--short", "HEAD"]);
@@ -356,31 +357,24 @@ function curatorPrompt(image) {
     ].join(" ");
 }
 
-async function ensureCuratorSession(image) {
-    const management = session.rpc.sessionManagement;
-    await management.configure({
-        enabled: true,
-        scope: "in-process",
-        tools: { list: true, create: true, message: true },
-        hasCreateHandler: false,
-    });
-    if (curatorSessionId) return { sessionId: curatorSessionId, created: false };
-    const { sessions } = await management.list({ cwd: ROOT });
-    const existing = sessions.find((candidate) =>
-        candidate.name === CURATOR_NAME
-        && candidate.cwd.toLocaleLowerCase() === ROOT.toLocaleLowerCase()
-    );
-    if (existing) {
-        curatorSessionId = existing.sessionId;
-        return { sessionId: curatorSessionId, created: false };
+function findCopilotCli() {
+    const localAppData = process.env.LOCALAPPDATA;
+    if (!localAppData) return null;
+    const packageRoot = join(localAppData, "copilot", "pkg", process.platform === "win32" ? "win32-x64" : "linux-x64");
+    try {
+        const versions = readdirSync(packageRoot, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => entry.name)
+            .sort()
+            .reverse();
+        for (const version of versions) {
+            const entry = join(packageRoot, version, "cli-main.js");
+            if (existsSync(entry)) return entry;
+        }
+    } catch {
+        return null;
     }
-    const created = await management.create({
-        name: CURATOR_NAME,
-        cwd: ROOT,
-        prompt: curatorPrompt(image),
-    });
-    curatorSessionId = created.sessionId;
-    return { sessionId: curatorSessionId, created: true };
+    return null;
 }
 
 async function analyzeMeme(id) {
@@ -389,15 +383,51 @@ async function analyzeMeme(id) {
     if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
     if (image.analysisStatus === "analyzing") return image;
     await updateMeme(id, { analysisStatus: "analyzing" });
+    const cli = findCopilotCli();
+    if (!cli) {
+        await updateMeme(id, {
+            analysisStatus: "needs-review",
+            analysisError: "Local Copilot CLI worker is unavailable.",
+        });
+        throw new CanvasError("curator_unavailable", "Local Copilot CLI worker is unavailable.");
+    }
     try {
-        const curator = await ensureCuratorSession(image);
-        if (!curator.created) {
-            await session.rpc.sessionManagement.message({
-                targetSessionId: curator.sessionId,
-                message: curatorPrompt(image),
-            });
-        }
-        return { ...image, analysisStatus: "analyzing", curatorSessionId: curator.sessionId };
+        if (analysisWorkers.has(id)) return { ...image, analysisStatus: "analyzing" };
+        const child = execFile("node", [
+            cli,
+            "--prompt", curatorPrompt(image),
+            "--silent",
+            "--allow-all-tools",
+            "--trust-folder",
+            "--model", "auto",
+            "--reasoning-effort", "low",
+            "--name", `Lolpilot Meme Curator ${id}`,
+            "--disable-client-telemetry",
+        ], {
+            cwd: ROOT,
+            windowsHide: true,
+            maxBuffer: 2 * 1024 * 1024,
+            timeout: 240000,
+        }, async (error, stdout, stderr) => {
+            analysisWorkers.delete(id);
+            const output = `${stdout || ""}\n${stderr || ""}`.trim().slice(0, 240);
+            try {
+                const changed = await syncAnalysisResults();
+                if (!changed) {
+                    await updateMeme(id, {
+                        analysisStatus: "needs-review",
+                        analysisError: error?.message || output || "Curator finished without writing an analysis file.",
+                    });
+                }
+            } catch (syncError) {
+                await updateMeme(id, {
+                    analysisStatus: "needs-review",
+                    analysisError: String(syncError?.message || syncError).slice(0, 240),
+                }).catch(() => {});
+            }
+        });
+        analysisWorkers.set(id, child);
+        return { ...image, analysisStatus: "analyzing", workerPid: child.pid || undefined };
     } catch (error) {
         await updateMeme(id, {
             analysisStatus: "needs-review",
