@@ -342,6 +342,29 @@ async function syncAnalysisResult(id) {
     }
 }
 
+async function recoverAnalysisState() {
+    const index = await loadMemeIndex();
+    let changed = false;
+    for (const image of index.images) {
+        if (image.analysisStatus === "analyzing") {
+            image.analysisStatus = "pending";
+            image.analysisError = "Recovered after extension reload.";
+            changed = true;
+        } else if (
+            image.analysisStatus === "needs-review"
+            && Number(image.confidence || 0) >= 0.55
+            && !image.duplicateOf
+            && /(?:file|written|path).*cache[\\/]analysis/i.test(image.analysisError || "")
+        ) {
+            image.analysisStatus = "analyzed";
+            image.analysisError = "";
+            changed = true;
+        }
+    }
+    if (changed) await saveMemeIndex(index);
+    return index.images.filter((image) => image.analysisStatus === "pending").length;
+}
+
 function curatorPrompt(image) {
     const outputPath = `${ANALYSIS_DIR}\\${image.id}.json`;
     return [
@@ -1345,6 +1368,7 @@ function sendJson(response, value, status = 200) {
 async function startServer() {
     await listProfiles();
     await mkdir(IMAGE_CACHE_DIR, { recursive: true });
+    await recoverAnalysisState();
     const server = createServer(async (request, response) => {
         try {
             const url = new URL(request.url, "http://127.0.0.1");
