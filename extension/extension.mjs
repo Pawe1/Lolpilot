@@ -1756,34 +1756,98 @@ async function startPreviewServer(_instanceId, image, caption = "") {
 <style>
   body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--background-color-default,#0f172a);
     color:var(--text-color-default,#f8fafc); font-family:var(--font-sans,Segoe UI,sans-serif); }
-  figure { margin:0; width:100%; cursor:pointer; text-align:center; }
-  .dismissed { display:grid; min-height:100vh; place-items:center; padding:24px; text-align:center; }
+  main { width:min(100%, 720px); padding:12px; }
+  canvas { display:block; width:100%; max-height:calc(100vh - 220px); object-fit:contain; background:#000; }
   body.idle {
-    background: linear-gradient(120deg, #f8fafc, #d1d5db, #f8fafc);
+    background: linear-gradient(120deg, #f8fafc, #d1d5db, #f8fafc) !important;
     background-size: 220% 220%;
     animation: idleWave 7s ease-in-out infinite;
   }
   @keyframes idleWave { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
   @media (prefers-reduced-motion: reduce) { body.idle { animation:none; } }
-  img { display:block; width:100%; max-height:calc(100vh - 90px); object-fit:contain; background:#000; }
-  figcaption { padding:12px 16px; font-size:18px; font-weight:700; }
+  .editor { display:grid; gap:8px; margin-top:10px; }
+  .editor input, .editor button { min-height:40px; border:1px solid #cbd5e1; border-radius:5px;
+    padding:8px 10px; color:#0f172a; background:#fff; font:600 14px var(--font-sans,Segoe UI,sans-serif); }
   small { display:block; padding-bottom:8px; color:var(--text-color-muted,#9da7b3); }
-  .feedback { display:flex; justify-content:center; gap:10px; padding:8px 0 12px; }
+  .feedback { display:flex; justify-content:center; gap:10px; padding:0 0 4px; }
   .feedback button { min-width:110px; min-height:40px; border:1px solid #475569; border-radius:5px;
     color:#111827; background:#fff; font:700 14px var(--font-sans,Segoe UI,sans-serif); cursor:pointer; }
   #hit, #miss { background:#fff; border-color:#d1d5db; }
   .feedback button.selected { outline:3px solid #8b5cf6; outline-offset:1px; }
+  .editor-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  #dismiss { margin-top:2px; }
 </style></head><body>
-<figure id="preview">
-  <img src="/image" alt="${escapeHtml(image.template || "Meme")}">
-  <figcaption>${escapeHtml(caption || image.template || "Lolpilot meme")}</figcaption>
-  <div class="feedback" onclick="event.stopPropagation()">
+<main>
+  <canvas id="preview" aria-label="${escapeHtml(image.template || "Meme editor")}"></canvas>
+  <div class="editor">
+    <input id="topText" maxlength="120" value="${escapeHtml(caption || "")}" placeholder="Top text">
+    <input id="bottomText" maxlength="120" placeholder="Bottom text">
+    <div class="editor-actions">
+      <button id="download">Download PNG</button>
+      <button id="clear">Clear text</button>
+    </div>
+  </div>
+  <div class="feedback">
     <button id="miss" aria-label="Meh">👎</button>
     <button id="hit" aria-label="Hit">👍</button>
   </div>
-  <small>Click image to dismiss</small>
-</figure>
+  <button id="dismiss">Dismiss preview</button>
+  <small>Preview stays local · PNG export is generated in your browser</small>
+</main>
 <script>
+const canvas = document.querySelector("#preview");
+const ctx = canvas.getContext("2d");
+const topText = document.querySelector("#topText");
+const bottomText = document.querySelector("#bottomText");
+const source = new Image();
+source.onload = render;
+source.src = "/image";
+
+function wrapText(text, maxWidth) {
+  const words = text.trim().toUpperCase().split(/\\s+/).filter(Boolean);
+  const lines = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current ? current + " " + word : word;
+    if (ctx.measureText(candidate).width <= maxWidth || !current) current = candidate;
+    else { lines.push(current); current = word; }
+  }
+  if (current) lines.push(current);
+  return lines.slice(0, 4);
+}
+
+function drawCaption(text, fromBottom) {
+  if (!text.trim()) return;
+  const fontSize = Math.max(24, Math.round(canvas.width / 13));
+  const maxWidth = canvas.width * .9;
+  const lineHeight = fontSize * 1.05;
+  ctx.font = "900 " + fontSize + "px Impact, Haettenschweiler, Arial Black, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = Math.max(5, Math.round(fontSize / 7));
+  ctx.strokeStyle = "#000";
+  ctx.fillStyle = "#fff";
+  const lines = wrapText(text, maxWidth);
+  const startY = fromBottom
+    ? canvas.height - 16 - (lines.length - 1) * lineHeight
+    : 16 + fontSize;
+  lines.forEach((line, index) => {
+    const y = startY + index * lineHeight;
+    ctx.strokeText(line, canvas.width / 2, y);
+    ctx.fillText(line, canvas.width / 2, y);
+  });
+}
+
+function render() {
+  if (!source.complete || !source.naturalWidth) return;
+  canvas.width = source.naturalWidth;
+  canvas.height = source.naturalHeight;
+  ctx.drawImage(source, 0, 0);
+  drawCaption(topText.value, false);
+  drawCaption(bottomText.value, true);
+}
+
 async function rate(value) {
   const response = await fetch("/rate", {
     method:"POST",
@@ -1796,9 +1860,25 @@ async function rate(value) {
 }
 document.querySelector("#hit").addEventListener("click", () => rate("hit"));
 document.querySelector("#miss").addEventListener("click", () => rate("miss"));
-document.querySelector("#preview").addEventListener("click", () => {
+topText.addEventListener("input", render);
+bottomText.addEventListener("input", render);
+document.querySelector("#clear").addEventListener("click", () => {
+  topText.value = "";
+  bottomText.value = "";
+  render();
+});
+document.querySelector("#download").addEventListener("click", () => {
+  const link = document.createElement("a");
+  link.download = "${escapeHtml((image.template || "lolpilot-meme").replace(/[^a-z0-9_-]+/gi, "-"))}.png";
+  link.href = canvas.toDataURL("image/png");
+  link.click();
+});
+document.querySelector("#dismiss").addEventListener("click", () => {
   document.body.innerHTML = "";
   document.body.className = "idle";
+  document.body.style.setProperty("background", "linear-gradient(120deg, #f8fafc, #d1d5db, #f8fafc)", "important");
+  document.body.style.setProperty("background-size", "220% 220%", "important");
+  document.body.style.setProperty("animation", "idleWave 7s ease-in-out infinite", "important");
 });
 </script></body></html>`);
     });
