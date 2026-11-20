@@ -18,6 +18,7 @@ const IMAGE_CACHE_DIR = `${ROOT}\\cache\\images`;
 const MEME_INDEX_PATH = `${ROOT}\\cache\\meme-index.json`;
 const ANALYSIS_DIR = `${ROOT}\\cache\\analysis`;
 const servers = new Map();
+let latestCanvasUrl;
 const execFileAsync = promisify(execFile);
 const analysisWorkers = new Map();
 const MAX_ANALYSIS_WORKERS = 3;
@@ -910,6 +911,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .meme-status { min-height: 20px; margin-top: 9px; color: #dc2626; font-weight: 650; }
     .meme-card { position: relative; display: block; min-width: 0; padding: 0; overflow: hidden; text-align: left;
       border: 1px solid var(--lp-border); border-radius: 5px; background: var(--lp-control); }
+    [hidden] { display: none !important; }
     .meme-card:hover { outline: 2px solid #8b5cf6; outline-offset: 1px; }
     .meme-card img { display: block; width: 100%; aspect-ratio: 1 / .72; object-fit: cover; background: #000; }
     .meme-name { display: block; overflow: hidden; padding: 8px 9px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1594,6 +1596,7 @@ const session = await joinSession({
                     entry = await startServer();
                     servers.set(ctx.instanceId, entry);
                 }
+                latestCanvasUrl = entry.url;
                 return { title: "Lolpilot Reactions", url: entry.url };
             },
             onClose: async (ctx) => {
@@ -1619,7 +1622,17 @@ const session = await joinSession({
                 const matches = findMemes(await loadMemeIndex(), input.prompt).slice(0, 1);
                 if (matches.length) {
                     const meme = matches[0];
-                    context.push(`A matching local meme is available: id=${meme.id}; clue="${meme.clue}"; tags=${meme.tags.join(",")}.`);
+                    if (latestCanvasUrl && meme.analysisStatus === "analyzed") {
+                        const imageUrl = `${latestCanvasUrl}api/meme/image?id=${encodeURIComponent(meme.id)}`;
+                        context.push(
+                            `A matching local meme is available: template="${meme.template}"; tags=${meme.tags.join(",")}.`,
+                            profile.images === "often"
+                                ? `Use it when it fits the tone. Render it as Markdown image: ![${meme.template}](${imageUrl}) and add a short caption.`
+                                : `Use it only for a clearly strong comic fit. If used, render it as: ![${meme.template}](${imageUrl}).`
+                        );
+                    } else {
+                        context.push(`A matching local meme exists but is not ready to display: status=${meme.analysisStatus}.`);
+                    }
                 }
             }
             return { additionalContext: context.join(" ") };
