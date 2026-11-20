@@ -18,6 +18,7 @@ const IMAGE_CACHE_DIR = `${ROOT}\\cache\\images`;
 const MEME_INDEX_PATH = `${ROOT}\\cache\\meme-index.json`;
 const ANALYSIS_DIR = `${ROOT}\\cache\\analysis`;
 const servers = new Map();
+const previewServers = new Map();
 const execFileAsync = promisify(execFile);
 const analysisWorkers = new Map();
 const MAX_ANALYSIS_WORKERS = 3;
@@ -1711,6 +1712,53 @@ async function startServer() {
     return { server, url: `http://127.0.0.1:${port}/` };
 }
 
+async function startPreviewServer(instanceId, image, caption = "") {
+    const server = createServer(async (request, response) => {
+        const url = new URL(request.url, "http://127.0.0.1");
+        if (url.pathname === "/close" && request.method === "POST") {
+            await session.rpc.canvas.close({ instanceId }).catch(() => {});
+            response.writeHead(204);
+            response.end();
+            return;
+        }
+        if (url.pathname === "/image") {
+            response.writeHead(200, {
+                "Content-Type": image.mimeType,
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+            });
+            response.end(await readFile(`${IMAGE_CACHE_DIR}\\${image.file}`));
+            return;
+        }
+        response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        response.end(`<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(image.template || "Lolpilot meme")}</title>
+<style>
+  body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--background-color-default,#0f172a);
+    color:var(--text-color-default,#f8fafc); font-family:var(--font-sans,Segoe UI,sans-serif); }
+  figure { margin:0; width:100%; cursor:pointer; text-align:center; }
+  img { display:block; width:100%; max-height:calc(100vh - 90px); object-fit:contain; background:#000; }
+  figcaption { padding:12px 16px; font-size:18px; font-weight:700; }
+  small { display:block; padding-bottom:8px; color:var(--text-color-muted,#9da7b3); }
+</style></head><body>
+<figure id="preview">
+  <img src="/image" alt="${escapeHtml(image.template || "Meme")}">
+  <figcaption>${escapeHtml(caption || image.template || "Lolpilot meme")}</figcaption>
+  <small>Click image to close</small>
+</figure>
+<script>
+document.querySelector("#preview").addEventListener("click", () => fetch("/close", { method:"POST" }));
+</script></body></html>`);
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    return {
+        server,
+        url: `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}/`,
+    };
+}
+
 const session = await joinSession({
     canvases: [
         createCanvas({
@@ -1776,6 +1824,44 @@ const session = await joinSession({
                 const entry = servers.get(ctx.instanceId);
                 if (entry) {
                     servers.delete(ctx.instanceId);
+                    await new Promise((resolve) => entry.server.close(() => resolve()));
+                }
+            },
+        }),
+        createCanvas({
+            id: "lolpilot-meme-preview",
+            displayName: "Lolpilot Meme",
+            description: "Show one selected meme beside the conversation; click to close.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    memeId: { type: "string" },
+                    caption: { type: "string" },
+                },
+                required: ["memeId"],
+            },
+            open: async (ctx) => {
+                const image = (await loadMemeIndex()).images.find((candidate) =>
+                    candidate.id === String(ctx.input.memeId)
+                );
+                if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+                const existing = previewServers.get(ctx.instanceId);
+                if (existing) {
+                    await new Promise((resolve) => existing.server.close(() => resolve()));
+                    previewServers.delete(ctx.instanceId);
+                }
+                const entry = await startPreviewServer(
+                    ctx.instanceId,
+                    image,
+                    String(ctx.input.caption || "")
+                );
+                previewServers.set(ctx.instanceId, entry);
+                return { title: image.template || "Lolpilot Meme", url: entry.url };
+            },
+            onClose: async (ctx) => {
+                const entry = previewServers.get(ctx.instanceId);
+                if (entry) {
+                    previewServers.delete(ctx.instanceId);
                     await new Promise((resolve) => entry.server.close(() => resolve()));
                 }
             },
