@@ -20,6 +20,7 @@ const ANALYSIS_DIR = `${ROOT}\\cache\\analysis`;
 const servers = new Map();
 const execFileAsync = promisify(execFile);
 const analysisWorkers = new Map();
+const MAX_ANALYSIS_WORKERS = 3;
 let BUILD_ID = "working-tree";
 try {
     const { stdout } = await execFileAsync("git", ["-C", ROOT, "rev-parse", "--short", "HEAD"]);
@@ -449,6 +450,7 @@ async function analyzeMeme(id) {
                     analysisError: String(syncError?.message || syncError).slice(0, 240),
                 }).catch(() => {});
             }
+            setTimeout(drainAnalysisQueue, 500);
         });
         analysisWorkers.set(id, child);
         return { ...image, analysisStatus: "analyzing", workerPid: child.pid || undefined };
@@ -528,10 +530,24 @@ async function replaceMeme(existingId, replacementId) {
     return replacement;
 }
 
+async function keepMeme(id) {
+    const index = await loadMemeIndex();
+    const image = index.images.find((candidate) => candidate.id === id);
+    if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+    image.duplicateOf = "";
+    image.replacementSuggested = false;
+    image.analysisStatus = Number(image.confidence || 0) < 0.55 ? "needs-review" : "analyzed";
+    image.analysisError = "";
+    await saveMemeIndex(index);
+    return image;
+}
+
 async function analyzePendingMemes() {
+    const available = Math.max(0, MAX_ANALYSIS_WORKERS - analysisWorkers.size);
+    if (!available) return [];
     const pending = (await loadMemeIndex()).images.filter((image) =>
-        ["pending", "needs-review"].includes(image.analysisStatus)
-    );
+        image.analysisStatus === "pending"
+    ).slice(0, available);
     const results = [];
     for (const image of pending) {
         try {
@@ -541,6 +557,11 @@ async function analyzePendingMemes() {
         }
     }
     return results;
+}
+
+async function drainAnalysisQueue() {
+    if (analysisWorkers.size >= MAX_ANALYSIS_WORKERS) return;
+    await analyzePendingMemes().catch(() => {});
 }
 
 function normalizeName(name) {
@@ -922,9 +943,12 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     body.library-open .library-page > .card { margin: 0; }
     .library-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
     .library-header h2 { margin: 0; flex: 1; }
-    .library-filters { display: grid; grid-template-columns: auto 170px minmax(160px, 1fr) auto; align-items: center;
+    .library-filters { display: grid; grid-template-columns: auto 170px minmax(160px, 1fr) 76px; align-items: center;
       gap: 8px; margin-bottom: 10px; }
     .library-filters select { width: auto; min-width: 170px; }
+    .filter-count { display: grid; place-items: center; line-height: 1.05; text-align: center; }
+    .filter-count strong { font-size: 15px; }
+    .filter-count span { color: var(--lp-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
     .meme-detail { max-width: min(620px, calc(100vw - 28px)); }
     .meme-detail img { display: block; width: 100%; max-height: 55vh; object-fit: contain; border-radius: 5px; background: #000; }
     .meme-detail dl { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 7px 12px; }
@@ -1041,18 +1065,6 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <h2>Meme library</h2>
       <span class="fine">${memeIndex.images.length} templates</span>
     </div>
-    <div class="library-filters">
-      <label for="statusFilter">Status</label>
-      <select id="statusFilter">
-        <option value="all">All</option>
-        <option value="analyzed">Analyzed</option>
-        <option value="needs-review">Needs review</option>
-        <option value="analyzing">Analyzing</option>
-        <option value="pending">Pending</option>
-      </select>
-      <input id="memeSearch" type="search" placeholder="Search template, tags, emotion…">
-      <span id="filterCount" class="fine"></span>
-    </div>
     <section class="card library-card">
       <div class="eyebrow">Add template</div>
       <p class="fine">Drop an image on Add, or choose one source. The agent analyzes it automatically.</p>
@@ -1066,6 +1078,20 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         <input id="memeFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
       </div>
       <div id="memeStatus" class="meme-status"></div>
+    </section>
+    <div class="library-filters">
+      <label for="statusFilter">Status</label>
+      <select id="statusFilter">
+        <option value="all">All</option>
+        <option value="analyzed">Analyzed</option>
+        <option value="needs-review">Needs review</option>
+        <option value="analyzing">Analyzing</option>
+        <option value="pending">Pending</option>
+      </select>
+      <input id="memeSearch" type="search" placeholder="Search template, tags, emotion…">
+      <span id="filterCount" class="filter-count"></span>
+    </div>
+    <section class="card library-card">
       <div class="meme-grid">
         ${memeCards || '<p class="fine">No local memes yet.</p>'}
       </div>
@@ -1078,6 +1104,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     <dl id="detailData"></dl>
     <div class="dialog-actions">
       <button type="button" id="closeMemeDetail">Close</button>
+      <button type="button" id="replaceMeme" class="neutral" hidden>Replace existing</button>
       <button type="button" id="deleteMeme" class="meme-delete">Delete</button>
     </div>
   </dialog>
@@ -1145,8 +1172,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       card.hidden = !show;
       if (show) visible += 1;
     }
-    document.querySelector("#filterCount").textContent =
-      visible + " of " + cards.length + " shown";
+    const count = document.querySelector("#filterCount");
+    count.innerHTML = "<strong>" + visible + " of " + cards.length + "</strong><span>shown</span>";
   }
   statusFilter.addEventListener("change", filterLibrary);
   memeSearch.addEventListener("input", filterLibrary);
@@ -1256,6 +1283,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   });
   const memeDetail = document.querySelector("#memeDetail");
   const deleteMemeButton = document.querySelector("#deleteMeme");
+  const replaceMemeButton = document.querySelector("#replaceMeme");
   let selectedMeme;
   for (const button of document.querySelectorAll("[data-meme-id]")) {
     button.addEventListener("click", () => {
@@ -1264,6 +1292,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       image.src = "/api/meme/image?id=" + encodeURIComponent(selectedMeme.id);
       image.alt = selectedMeme.template || selectedMeme.file;
       document.querySelector("#detailTitle").textContent = selectedMeme.template || "Awaiting analysis";
+      replaceMemeButton.hidden = !selectedMeme.duplicateOf;
+      replaceMemeButton.textContent = selectedMeme.replacementSuggested ? "Replace existing" : "Keep both";
       const rows = [
         ["Status", selectedMeme.analysisStatus],
         ["Confidence", selectedMeme.confidence ? Math.round(selectedMeme.confidence * 100) + "%" : "—"],
@@ -1286,6 +1316,17 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   document.querySelector("#closeMemeDetail").addEventListener("click", () => memeDetail.close());
   deleteMemeButton.addEventListener("click", () =>
     selectedMeme && run(() => post("/api/meme/delete", { id: selectedMeme.id })));
+  replaceMemeButton.addEventListener("click", () => {
+    if (!selectedMeme?.duplicateOf) return;
+    if (selectedMeme.replacementSuggested) {
+      run(() => post("/api/meme/replace", {
+        existingId: selectedMeme.duplicateOf,
+        replacementId: selectedMeme.id
+      }));
+    } else {
+      run(() => post("/api/meme/keep", { id: selectedMeme.id }));
+    }
+  });
 
   const importFile = document.querySelector("#importFile");
   document.querySelector("#import").addEventListener("click", () => importFile.click());
@@ -1436,6 +1477,16 @@ async function startServer() {
             if (request.method === "POST" && url.pathname === "/api/meme/delete") {
                 const body = await readBody(request);
                 sendJson(response, await deleteMeme(body.id));
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/api/meme/replace") {
+                const body = await readBody(request);
+                sendJson(response, await replaceMeme(body.existingId, body.replacementId));
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/api/meme/keep") {
+                const body = await readBody(request);
+                sendJson(response, await keepMeme(body.id));
                 return;
             }
             if (request.method === "GET" && url.pathname === "/api/meme/image") {
