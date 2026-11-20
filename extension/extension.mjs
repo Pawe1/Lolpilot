@@ -588,7 +588,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         `<option value="${escapeHtml(name)}" ${name === activeName ? "selected" : ""}>${escapeHtml(name)}</option>`
     ).join("");
     const memeCards = memeIndex.images.map((image) => `
-      <article class="meme-card">
+      <article class="meme-card ${image.analysisStatus === "analyzing" ? "analyzing" : ""}">
         <img src="/api/meme/image?id=${encodeURIComponent(image.id)}" alt="${escapeHtml(image.clue || image.file)}">
         <div class="meme-copy">
           <strong>${escapeHtml(image.template || image.clue || "Awaiting analysis")}</strong>
@@ -686,6 +686,14 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .meme-copy { min-width: 0; }
     .meme-copy strong, .meme-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .meme-copy small { margin-top: 3px; color: var(--lp-muted); }
+    .meme-card.analyzing { animation: analysisPulse 2.4s ease-in-out infinite; }
+    .meme-card.analyzing .meme-copy small::before { content: ""; display: inline-block; width: 6px; height: 6px;
+      margin-right: 6px; border-radius: 50%; background: #8b5cf6; vertical-align: 1px; animation: statusBlink 1.2s ease-in-out infinite; }
+    @keyframes analysisPulse { 50% { border-color: #8b5cf6; box-shadow: 0 0 0 2px #8b5cf622; } }
+    @keyframes statusBlink { 50% { opacity: .25; transform: scale(.75); } }
+    @media (prefers-reduced-motion: reduce) {
+      .meme-card.analyzing, .meme-card.analyzing .meme-copy small::before { animation: none; }
+    }
     .meme-delete { min-height: 36px; padding: 7px 9px; color: #fff; border-color: #be123c; background: #be123c; }
     .meme-actions { position: relative; margin-top: 11px; }
     #addMeme { width: 100%; border-style: dashed; }
