@@ -787,6 +787,7 @@ function applyReaction(profile, reaction) {
 function profileContext(profile) {
     return [
         "Lolpilot profile:",
+        "This is user-facing chat. Respond normally in the user's language; never return a meme metadata JSON object.",
         `humor level ${profile.level}/3`,
         `image preference: ${profile.images}`,
         `censor-safe mode: ${profile.censorSafe ? "on" : "off"}`,
@@ -1627,8 +1628,8 @@ const session = await joinSession({
                         context.push(
                             `A matching local meme is available: template="${meme.template}"; tags=${meme.tags.join(",")}.`,
                             profile.images === "often"
-                                ? `Use it when it fits the tone. Render it as Markdown image: ![${meme.template}](${imageUrl}) and add a short caption.`
-                                : `Use it only for a clearly strong comic fit. If used, render it as: ![${meme.template}](${imageUrl}).`
+                                ? `If it genuinely fits the user's topic, include this Markdown image in a normal response: ![${meme.template}](${imageUrl}). Add a short human caption. Do not return JSON.`
+                                : `If it is a clearly strong comic fit, include this Markdown image in a normal response: ![${meme.template}](${imageUrl}). Do not return JSON.`
                         );
                     } else {
                         context.push(`A matching local meme exists but is not ready to display: status=${meme.analysisStatus}.`);
