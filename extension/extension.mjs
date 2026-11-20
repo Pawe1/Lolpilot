@@ -1770,17 +1770,16 @@ async function startPreviewServer(_instanceId, image, caption = "") {
   small { display:block; padding-bottom:8px; color:var(--text-color-muted,#9da7b3); }
   .feedback { display:flex; justify-content:center; gap:10px; padding:8px 0 12px; }
   .feedback button { min-width:110px; min-height:40px; border:1px solid #475569; border-radius:5px;
-    color:#fff; background:#334155; font:700 14px var(--font-sans,Segoe UI,sans-serif); cursor:pointer; }
-  #hit { border-color:#166534; background:#15803d; }
-  #miss { border-color:#991b1b; background:#b91c1c; }
+    color:#111827; background:#fff; font:700 14px var(--font-sans,Segoe UI,sans-serif); cursor:pointer; }
+  #hit, #miss { background:#fff; border-color:#d1d5db; }
   .feedback button.selected { outline:3px solid #8b5cf6; outline-offset:1px; }
 </style></head><body>
 <figure id="preview">
   <img src="/image" alt="${escapeHtml(image.template || "Meme")}">
   <figcaption>${escapeHtml(caption || image.template || "Lolpilot meme")}</figcaption>
   <div class="feedback" onclick="event.stopPropagation()">
-    <button id="hit" aria-label="Hit">👍</button>
     <button id="miss" aria-label="Meh">👎</button>
+    <button id="hit" aria-label="Hit">👍</button>
   </div>
   <small>Click image to dismiss</small>
 </figure>
