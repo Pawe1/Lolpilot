@@ -1712,13 +1712,32 @@ async function startServer() {
     return { server, url: `http://127.0.0.1:${port}/` };
 }
 
-async function startPreviewServer(instanceId, image, caption = "") {
+async function startPreviewServer(_instanceId, image, caption = "") {
     const server = createServer(async (request, response) => {
         const url = new URL(request.url, "http://127.0.0.1");
         if (url.pathname === "/close" && request.method === "POST") {
-            await session.rpc.canvas.close({ instanceId }).catch(() => {});
             response.writeHead(204);
             response.end();
+            return;
+        }
+        if (url.pathname === "/rate" && request.method === "POST") {
+            const body = await readBody(request);
+            if (!["hit", "miss"].includes(body.value)) {
+                response.writeHead(400);
+                response.end("Invalid rating.");
+                return;
+            }
+            const index = await loadMemeIndex();
+            const current = index.images.find((candidate) => candidate.id === image.id);
+            if (current) {
+                current.feedback = { ...(current.feedback || {}) };
+                current.feedback[body.value] = Number(current.feedback[body.value] || 0) + 1;
+                current.feedback.last = body.value;
+                current.uses = Number(current.uses || 0) + 1;
+                current.updatedAt = new Date().toISOString();
+                await saveMemeIndex(index);
+            }
+            sendJson(response, { id: image.id, value: body.value });
             return;
         }
         if (url.pathname === "/image") {
@@ -1738,17 +1757,40 @@ async function startPreviewServer(instanceId, image, caption = "") {
   body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--background-color-default,#0f172a);
     color:var(--text-color-default,#f8fafc); font-family:var(--font-sans,Segoe UI,sans-serif); }
   figure { margin:0; width:100%; cursor:pointer; text-align:center; }
+  .dismissed { display:grid; min-height:100vh; place-items:center; padding:24px; text-align:center; }
   img { display:block; width:100%; max-height:calc(100vh - 90px); object-fit:contain; background:#000; }
   figcaption { padding:12px 16px; font-size:18px; font-weight:700; }
   small { display:block; padding-bottom:8px; color:var(--text-color-muted,#9da7b3); }
+  .feedback { display:flex; justify-content:center; gap:10px; padding:8px 0 12px; }
+  .feedback button { min-width:110px; min-height:40px; border:1px solid #475569; border-radius:5px;
+    color:inherit; background:#1e293b; font:700 14px var(--font-sans,Segoe UI,sans-serif); cursor:pointer; }
+  .feedback button.selected { outline:3px solid #8b5cf6; outline-offset:1px; }
 </style></head><body>
 <figure id="preview">
   <img src="/image" alt="${escapeHtml(image.template || "Meme")}">
   <figcaption>${escapeHtml(caption || image.template || "Lolpilot meme")}</figcaption>
-  <small>Click image to close</small>
+  <div class="feedback" onclick="event.stopPropagation()">
+    <button id="hit">Hit</button>
+    <button id="miss">Meh</button>
+  </div>
+  <small>Click image to dismiss</small>
 </figure>
 <script>
-document.querySelector("#preview").addEventListener("click", () => fetch("/close", { method:"POST" }));
+async function rate(value) {
+  const response = await fetch("/rate", {
+    method:"POST",
+    headers: {"content-type":"application/json"},
+    body: JSON.stringify({ value })
+  });
+  if (!response.ok) return;
+  document.querySelectorAll(".feedback button").forEach((button) => button.classList.remove("selected"));
+  document.querySelector(value === "hit" ? "#hit" : "#miss").classList.add("selected");
+}
+document.querySelector("#hit").addEventListener("click", () => rate("hit"));
+document.querySelector("#miss").addEventListener("click", () => rate("miss"));
+document.querySelector("#preview").addEventListener("click", () => {
+  document.body.innerHTML = '<div class="dismissed"><strong>Meme dismissed</strong><span>Next one will reuse this panel.</span></div>';
+});
 </script></body></html>`);
     });
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
