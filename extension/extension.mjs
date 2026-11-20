@@ -19,6 +19,7 @@ const MEME_INDEX_PATH = `${ROOT}\\cache\\meme-index.json`;
 const ANALYSIS_DIR = `${ROOT}\\cache\\analysis`;
 const servers = new Map();
 let latestCanvasUrl;
+let latestCanvasInstanceId;
 const execFileAsync = promisify(execFile);
 const analysisWorkers = new Map();
 const MAX_ANALYSIS_WORKERS = 3;
@@ -1598,6 +1599,7 @@ const session = await joinSession({
                     servers.set(ctx.instanceId, entry);
                 }
                 latestCanvasUrl = entry.url;
+                latestCanvasInstanceId = ctx.instanceId;
                 return { title: "Lolpilot Reactions", url: entry.url };
             },
             onClose: async (ctx) => {
@@ -1624,12 +1626,20 @@ const session = await joinSession({
                 if (matches.length) {
                     const meme = matches[0];
                     if (latestCanvasUrl && meme.analysisStatus === "analyzed") {
-                        const imageUrl = `${latestCanvasUrl}api/meme/image?id=${encodeURIComponent(meme.id)}`;
+                        const imagePath = `${IMAGE_CACHE_DIR}\\${meme.file}`;
+                        await session.rpc.extensions.sendAttachmentsToMessage({
+                            instanceId: latestCanvasInstanceId,
+                            attachments: [{
+                                type: "file",
+                                path: imagePath,
+                                displayName: meme.template || meme.file,
+                            }],
+                        });
                         context.push(
-                            `A matching local meme is available: template="${meme.template}"; tags=${meme.tags.join(",")}.`,
+                            `A native image attachment matching this topic is available: template="${meme.template}"; tags=${meme.tags.join(",")}.`,
                             profile.images === "often"
-                                ? `If it genuinely fits the user's topic, include this Markdown image in a normal response: ![${meme.template}](${imageUrl}). Add a short human caption. Do not return JSON.`
-                                : `If it is a clearly strong comic fit, include this Markdown image in a normal response: ![${meme.template}](${imageUrl}). Do not return JSON.`
+                                ? "If it genuinely fits the tone, mention the image naturally in the response. The host owns how image attachments are displayed; never emit a localhost URL or JSON."
+                                : "Use the attachment only for a clearly strong comic fit. The host owns how image attachments are displayed; never emit a localhost URL or JSON."
                         );
                     } else {
                         context.push(`A matching local meme exists but is not ready to display: status=${meme.analysisStatus}.`);
