@@ -21,7 +21,7 @@ const servers = new Map();
 const execFileAsync = promisify(execFile);
 const analysisWorkers = new Map();
 const MAX_ANALYSIS_WORKERS = 3;
-let lastAssistantTurn = { id: "", completedAt: 0 };
+let lastAssistantTurn = { id: "", completedAt: 0, styles: [] };
 let BUILD_ID = "working-tree";
 try {
     const { stdout } = await execFileAsync("git", ["-C", ROOT, "rev-parse", "--short", "HEAD"]);
@@ -39,6 +39,7 @@ const defaultProfile = {
     hits: 0,
     misses: 0,
     ratedTurnId: "",
+    styleScores: {},
 };
 
 async function loadMemeIndex() {
@@ -65,6 +66,61 @@ function normalizeTags(tags) {
         .map((tag) => tag.trim().toLowerCase().replace(/\s+/g, "-"))
         .filter(Boolean))]
         .slice(0, 24);
+}
+
+function parseStyleScores(value) {
+    try {
+        const parsed = JSON.parse(String(value || "{}"));
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? normalizeStyleScores(parsed) : {};
+    } catch {
+        return {};
+    }
+}
+
+function normalizeStyleScores(scores) {
+    return Object.fromEntries(Object.entries(scores || {})
+        .filter(([key, value]) => /^[a-z][a-z0-9-]{0,31}$/.test(key) && Number.isFinite(Number(value)))
+        .map(([key, value]) => [key, Math.max(-20, Math.min(20, Math.round(Number(value))))])
+        .slice(0, 24));
+}
+
+function adjustStyleScores(scores, styles, delta) {
+    const next = { ...normalizeStyleScores(scores) };
+    for (const style of styles) {
+        next[style] = Math.max(-20, Math.min(20, (next[style] || 0) + delta));
+    }
+    return next;
+}
+
+function detectHumorStyles(content) {
+    const text = String(content || "");
+    const styles = [];
+    if (/^[^\n]{1,90}[.!?](\n|$)/.test(text)) styles.push("punchline-first");
+    if (/[!?]{1,2}$/.test(text.trim())) styles.push("dry-punch");
+    if (/\b(jakby|wygląda|brzmi jak|niczym)\b/i.test(text)) styles.push("absurd-analogy");
+    if (/\b(ale|tylko|znowu|spokojnie)\b/i.test(text)) styles.push("callback");
+    if (/[😀-🙏🌀-🫿]/u.test(text)) styles.push("emoji");
+    if (/\b(as an AI|jako model|jestem asystentem)\b/i.test(text)) styles.push("assistant-speak");
+    if (text.length > 700) styles.push("long-explanation");
+    if (/\b(podsumowując|należy|powyżej|weryfikacja|funkcjonalność)\b/i.test(text)) styles.push("bureaucratic-tone");
+    return styles;
+}
+
+function learnedHumorInstruction(scores) {
+    const liked = Object.entries(normalizeStyleScores(scores))
+        .filter(([, score]) => score >= 1)
+        .sort((left, right) => right[1] - left[1])
+        .map(([style]) => style)
+        .slice(0, 5);
+    const disliked = Object.entries(normalizeStyleScores(scores))
+        .filter(([, score]) => score <= -1)
+        .sort((left, right) => left[1] - right[1])
+        .map(([style]) => style)
+        .slice(0, 5);
+    return [
+        liked.length ? `Amplify learned humor traits: ${liked.join(", ")}.` : "",
+        disliked.length ? `Avoid learned humor traits: ${disliked.join(", ")}.` : "",
+    ].filter(Boolean).join(" ");
 }
 
 function imageDimensions(mimeType, bytes) {
@@ -597,10 +653,14 @@ function parseProfile(text) {
         hits: number("Hits", 0),
         misses: number("Misses", 0),
         ratedTurnId: value("Rated turn", ""),
+        styleScores: parseStyleScores(value("Learned humor", "{}")),
     };
 }
 
 function profileMarkdown(profile) {
+    const learnedHumor = Object.keys(profile.styleScores || {}).length
+        ? JSON.stringify(profile.styleScores)
+        : "{}";
     return `# Lolpilot profile
 
 - Owner: PC
@@ -612,6 +672,7 @@ function profileMarkdown(profile) {
 - Hits: ${profile.hits}
 - Misses: ${profile.misses}
 - Rated turn: ${profile.ratedTurnId}
+- Learned humor: ${learnedHumor}
 - Style: concise, playful, technically precise
 - Never joke in commits, security findings, production incidents, or when safety is at stake
 `;
@@ -627,6 +688,7 @@ function normalizeProfile(profile) {
         hits: Math.max(0, Number(profile.hits) || 0),
         misses: Math.max(0, Number(profile.misses) || 0),
         ratedTurnId: String(profile.ratedTurnId || ""),
+        styleScores: normalizeStyleScores(profile.styleScores),
     };
 }
 
@@ -751,16 +813,18 @@ async function deleteProfile(name) {
     return { deleted: normalizedName, active: await getActiveName() };
 }
 
-function applyReaction(profile, reaction) {
+function applyReaction(profile, reaction, turnStyles = []) {
     const next = { ...profile, lastReaction: reaction };
     switch (reaction) {
         case "trafione":
             next.level = Math.min(4, next.level + 1);
             next.hits += 1;
+            next.styleScores = adjustStyleScores(next.styleScores, turnStyles, 1);
             break;
         case "meh":
             next.level = Math.max(0, next.level - 1);
             next.misses += 1;
+            next.styleScores = adjustStyleScores(next.styleScores, turnStyles, -1);
             break;
         case "humor+":
             next.level = Math.min(4, next.level + 1);
@@ -794,10 +858,10 @@ function applyReaction(profile, reaction) {
 
 function profileContext(profile) {
     const humorDirection = [
-        "Humor is off; remain straightforward.",
-        "Use subtle, mostly situational humor.",
-        "Use clear, playful, safe humor.",
-        "Use abstract, absurd, sharp, cutting humor in ordinary conversation and technical answers. Deliver at least one strong punchline when the topic allows it; remain contextual, not offensive.",
+        "Humor is off; use a formal, straightforward, official tone.",
+        "Use subtle, mostly situational humor. Keep the voice casual and strictly non-bureaucratic.",
+        "Use clear, playful humor in a relaxed human voice. No corporate or bureaucratic phrasing.",
+        "Use abstract, absurd, sharp, cutting humor in ordinary conversation and technical answers. Deliver at least one strong punchline when the topic allows it; remain contextual, not offensive, and never bureaucratic.",
         "Start with a sharp punchline or cutting one-liner before any explanation. Use fast internet-forum banter, dark deadpan, absurdity, callbacks, and roast the situation or bad ideas. Avoid corporate-safe phrasing and TED-talk moralizing. A dry bureaucratic answer at this level is a style failure. Never target protected groups, real victims, the user, or current real-world tragedies.",
     ][profile.level];
     return [
@@ -805,6 +869,7 @@ function profileContext(profile) {
         "This is user-facing chat. Respond normally in the user's language; never return a meme metadata JSON object.",
         "Do not use emoji unless the user explicitly asks for emoji.",
         profile.emoji === "allowed" ? "Emoji may be used only when they improve the joke." : "Keep emoji disabled.",
+        learnedHumorInstruction(profile.styleScores),
         `humor level ${profile.level}/4`,
         `image preference: ${profile.images}`,
         `censor-safe mode: ${profile.censorSafe ? "on" : "off"}`,
@@ -1536,7 +1601,11 @@ async function startServer() {
             }
             if (request.method === "POST" && url.pathname === "/api/reaction") {
                 const body = await readBody(request);
-                const next = applyReaction(await loadProfile(), body.reaction);
+                const next = applyReaction(
+                    await loadProfile(),
+                    body.reaction,
+                    body.turnId === lastAssistantTurn.id ? lastAssistantTurn.styles : []
+                );
                 if (["trafione", "meh"].includes(body.reaction)) next.ratedTurnId = String(body.turnId || "");
                 sendJson(response, await saveActiveProfile(next));
                 return;
@@ -1745,5 +1814,6 @@ session.on("assistant.message", (event) => {
     lastAssistantTurn = {
         id: messageId,
         completedAt: Date.now(),
+        styles: detectHumorStyles(event.data.content),
     };
 });
