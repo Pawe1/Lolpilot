@@ -1758,6 +1758,13 @@ async function startPreviewServer(_instanceId, image, caption = "") {
     color:var(--text-color-default,#f8fafc); font-family:var(--font-sans,Segoe UI,sans-serif); }
   figure { margin:0; width:100%; cursor:pointer; text-align:center; }
   .dismissed { display:grid; min-height:100vh; place-items:center; padding:24px; text-align:center; }
+  body.idle {
+    background: linear-gradient(120deg, #f8fafc, #d1d5db, #f8fafc);
+    background-size: 220% 220%;
+    animation: idleWave 7s ease-in-out infinite;
+  }
+  @keyframes idleWave { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+  @media (prefers-reduced-motion: reduce) { body.idle { animation:none; } }
   img { display:block; width:100%; max-height:calc(100vh - 90px); object-fit:contain; background:#000; }
   figcaption { padding:12px 16px; font-size:18px; font-weight:700; }
   small { display:block; padding-bottom:8px; color:var(--text-color-muted,#9da7b3); }
@@ -1772,8 +1779,8 @@ async function startPreviewServer(_instanceId, image, caption = "") {
   <img src="/image" alt="${escapeHtml(image.template || "Meme")}">
   <figcaption>${escapeHtml(caption || image.template || "Lolpilot meme")}</figcaption>
   <div class="feedback" onclick="event.stopPropagation()">
-    <button id="hit">Hit</button>
-    <button id="miss">Meh</button>
+    <button id="hit" aria-label="Hit">👍</button>
+    <button id="miss" aria-label="Meh">👎</button>
   </div>
   <small>Click image to dismiss</small>
 </figure>
@@ -1791,7 +1798,8 @@ async function rate(value) {
 document.querySelector("#hit").addEventListener("click", () => rate("hit"));
 document.querySelector("#miss").addEventListener("click", () => rate("miss"));
 document.querySelector("#preview").addEventListener("click", () => {
-  document.body.innerHTML = '<div class="dismissed"><strong>Meme dismissed</strong><span>Next one will reuse this panel.</span></div>';
+  document.body.innerHTML = "";
+  document.body.className = "idle";
 });
 </script></body></html>`);
     });
