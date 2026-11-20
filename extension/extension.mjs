@@ -6,6 +6,7 @@ const ROOT = "C:\\Dev\\lolpilot";
 const ACTIVE_PROFILE_PATH = `${ROOT}\\profile.md`;
 const PROFILES_DIR = `${ROOT}\\profiles`;
 const ACTIVE_NAME_PATH = `${ROOT}\\active-profile.txt`;
+const IMAGE_CACHE_DIR = `${ROOT}\\cache\\images`;
 const servers = new Map();
 
 const defaultProfile = {
@@ -244,7 +245,7 @@ function renderHtml(profile, profiles, activeName) {
       background: linear-gradient(135deg, #f97316, #ec4899); color: white; font-size: 22px; }
     h1 { margin: 0; font-size: 24px; }
     .tagline { margin: 1px 0 0; color: var(--lp-muted); }
-    .card { margin: 12px 0; padding: 15px; border: 1px solid var(--lp-border); border-radius: 7px;
+    .card { margin: 12px 0; padding: 15px; border: 1px solid var(--lp-border); border-radius: 6px;
       background: var(--lp-card); box-shadow: 0 5px 18px #00000014; }
     .eyebrow { color: #8b5cf6; font-size: 11px; font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
     .level { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 8px; }
@@ -265,8 +266,11 @@ function renderHtml(profile, profiles, activeName) {
     button.neutral { color: #fff; border-color: #5b21b6; background: #5b21b6; }
     button.selected { outline: 3px solid #f59e0b; outline-offset: 1px; }
     button.wide { grid-column: 1 / -1; }
-    .profile-row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; margin-top: 12px; }
-    .new-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 9px; }
+    .profile-card { padding: 12px 14px; }
+    .profile-label { display: block; margin-bottom: 5px; color: var(--lp-muted); font-size: 11px;
+      font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+    .profile-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 7px; }
+    .profile-row button, .profile-row .export { min-width: 42px; padding: 8px 10px; }
     select, input { width: 100%; padding: 8px 10px; }
     .stats { display: flex; flex-wrap: wrap; gap: 18px; color: var(--lp-muted); }
     .stats strong { color: inherit; }
@@ -274,6 +278,14 @@ function renderHtml(profile, profiles, activeName) {
     .fine { color: var(--lp-muted); font-size: 12px; }
     a.export { display: inline-grid; place-items: center; min-height: 42px; padding: 8px 12px; border: 1px solid var(--lp-border);
       border-radius: 5px; color: inherit; background: var(--lp-control); font-weight: 700; text-decoration: none; }
+    dialog { width: min(420px, calc(100vw - 32px)); border: 1px solid var(--lp-border); border-radius: 7px;
+      color: inherit; background: var(--lp-card); box-shadow: 0 18px 60px #0008; }
+    dialog::backdrop { background: #0009; backdrop-filter: blur(2px); }
+    dialog h2 { margin: 0 0 8px; font-size: 18px; }
+    dialog p { color: var(--lp-muted); }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+    .dialog-actions button { min-width: 90px; }
+    button:disabled { cursor: not-allowed; opacity: .55; }
   </style>
 </head>
 <body>
@@ -283,16 +295,13 @@ function renderHtml(profile, profiles, activeName) {
     <div><h1>Lolpilot</h1><p class="tagline">Tune the vibe. Don't break the facts.</p></div>
   </div>
 
-  <section class="card">
-    <div class="eyebrow">Profile lab</div>
+  <section class="card profile-card">
+    <label class="profile-label" for="profile">Selected profile</label>
     <div class="profile-row">
       <select id="profile">${options}</select>
-      <a class="export" href="/api/export" title="Export active profile">Export</a>
-      <button id="delete" title="Delete selected profile">Delete</button>
-    </div>
-    <div class="new-row">
-      <input id="newProfile" maxlength="32" placeholder="New profile, e.g. code-review">
-      <button id="create" class="neutral">Create</button>
+      <button id="new" class="neutral" title="Create new profile" aria-label="Create new profile">＋</button>
+      <a class="export" href="/api/export" title="Export active profile" aria-label="Export active profile">⇩</a>
+      <button id="delete" title="Delete selected profile" aria-label="Delete selected profile">⌫</button>
     </div>
   </section>
 
@@ -330,7 +339,28 @@ function renderHtml(profile, profiles, activeName) {
     <span>Last: <strong>${escapeHtml(profile.lastReaction)}</strong></span>
   </section>
   <div class="status" id="status"></div>
-  <p class="fine">Active profile: ${escapeHtml(activeName)} · Stored in C:\\Dev\\lolpilot</p>
+  <p class="fine">Profile data: C:\\Dev\\lolpilot · Image cache: C:\\Dev\\lolpilot\\cache\\images</p>
+
+  <dialog id="createDialog">
+    <form id="createForm" method="dialog">
+      <h2>Create profile</h2>
+      <p>Start from the current settings, then tune it independently.</p>
+      <input id="newProfile" maxlength="32" placeholder="e.g. code-review" autofocus>
+      <div class="dialog-actions">
+        <button type="button" id="cancelCreate">Cancel</button>
+        <button type="submit" class="good">Create profile</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="deleteDialog">
+    <h2>Delete profile?</h2>
+    <p id="deleteMessage"></p>
+    <div class="dialog-actions">
+      <button type="button" id="cancelDelete">Cancel</button>
+      <button type="button" id="confirmDelete" class="bad" disabled>Wait 5s</button>
+    </div>
+  </dialog>
 </main>
 <script>
   const status = document.querySelector("#status");
@@ -357,14 +387,48 @@ function renderHtml(profile, profiles, activeName) {
   }
   document.querySelector("#profile").addEventListener("change", (event) =>
     run(() => post("/api/profile/switch", { name: event.target.value })));
-  document.querySelector("#create").addEventListener("click", () =>
-    run(() => post("/api/profile/create", { name: document.querySelector("#newProfile").value })));
-  document.querySelector("#delete").addEventListener("click", () =>
-    run(() => {
-      const name = document.querySelector("#profile").value;
-      if (!confirm("Delete profile " + name + "?")) return Promise.resolve();
-      return post("/api/profile/delete", { name });
-    }));
+
+  const createDialog = document.querySelector("#createDialog");
+  document.querySelector("#new").addEventListener("click", () => createDialog.showModal());
+  document.querySelector("#cancelCreate").addEventListener("click", () => createDialog.close());
+  document.querySelector("#createForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = document.querySelector("#newProfile").value;
+    run(() => post("/api/profile/create", { name }));
+  });
+
+  const deleteDialog = document.querySelector("#deleteDialog");
+  const confirmDelete = document.querySelector("#confirmDelete");
+  let deleteTimer;
+  document.querySelector("#delete").addEventListener("click", () => {
+    const name = document.querySelector("#profile").value;
+    document.querySelector("#deleteMessage").textContent =
+      'Profile "' + name + '" will be permanently removed.';
+    confirmDelete.disabled = true;
+    let seconds = 5;
+    confirmDelete.textContent = "Wait " + seconds + "s";
+    clearInterval(deleteTimer);
+    deleteTimer = setInterval(() => {
+      seconds -= 1;
+      if (seconds > 0) {
+        confirmDelete.textContent = "Wait " + seconds + "s";
+      } else {
+        clearInterval(deleteTimer);
+        confirmDelete.disabled = false;
+        confirmDelete.textContent = "Delete now";
+      }
+    }, 1000);
+    deleteDialog.showModal();
+  });
+  document.querySelector("#cancelDelete").addEventListener("click", () => {
+    clearInterval(deleteTimer);
+    deleteDialog.close();
+  });
+  confirmDelete.addEventListener("click", () => {
+    const name = document.querySelector("#profile").value;
+    run(() => post("/api/profile/delete", { name }));
+  });
+  deleteDialog.addEventListener("close", () => clearInterval(deleteTimer));
 </script>
 </body>
 </html>`;
@@ -383,6 +447,7 @@ function sendJson(response, value, status = 200) {
 
 async function startServer() {
     await listProfiles();
+    await mkdir(IMAGE_CACHE_DIR, { recursive: true });
     const server = createServer(async (request, response) => {
         try {
             const url = new URL(request.url, "http://127.0.0.1");
