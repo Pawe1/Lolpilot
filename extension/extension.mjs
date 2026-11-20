@@ -137,6 +137,36 @@ async function createProfile(name, profile = defaultProfile) {
     return { name: normalizedName, ...normalizeProfile(profile) };
 }
 
+function validateImportedProfile(payload) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        throw new CanvasError("invalid_import", "The selected file is not a Lolpilot profile.");
+    }
+    const name = normalizeName(payload.name);
+    const level = Number(payload.level);
+    if (!Number.isInteger(level) || level < 0 || level > 3) {
+        throw new CanvasError("invalid_import", "Profile level must be an integer from 0 to 3.");
+    }
+    if (!["rare", "often", "never"].includes(payload.images)) {
+        throw new CanvasError("invalid_import", 'Images must be "rare", "often", or "never".');
+    }
+    return {
+        name,
+        profile: normalizeProfile({
+            ...payload,
+            lastReaction: "imported",
+        }),
+    };
+}
+
+async function importProfile(payload, overwrite = false) {
+    const imported = validateImportedProfile(payload);
+    const names = await listProfiles();
+    if (names.includes(imported.name) && !overwrite) {
+        throw new CanvasError("profile_exists", `Profile "${imported.name}" already exists.`);
+    }
+    return persistActive(imported.name, imported.profile);
+}
+
 async function switchProfile(name) {
     const normalizedName = normalizeName(name);
     return persistActive(normalizedName, await loadNamedProfile(normalizedName));
@@ -272,13 +302,20 @@ function renderHtml(profile, profiles, activeName) {
     .profile-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
     .profile-row button, .profile-row .export { min-width: 42px; padding: 8px 10px; }
     .profile-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+    .transfer-actions { display: flex; align-items: center; gap: 8px; }
     select, input { width: 100%; padding: 8px 10px; }
     .stats { display: flex; flex-wrap: wrap; gap: 18px; color: var(--lp-muted); }
     .stats strong { color: inherit; }
     .status { min-height: 20px; margin-top: 10px; color: #8b5cf6; text-align: center; font-weight: 650; }
     .fine { color: var(--lp-muted); font-size: 12px; }
-    a.export { display: inline-grid; place-items: center; min-height: 42px; padding: 8px 12px; border: 1px solid var(--lp-border);
+    a.export, .import { display: inline-grid; place-items: center; min-height: 42px; padding: 8px 12px; border: 1px solid var(--lp-border);
       border-radius: 5px; color: inherit; background: var(--lp-control); font-weight: 700; text-decoration: none; }
+    .arrow { color: #000; font-size: 20px; font-weight: 900; line-height: 1; }
+    body[data-color-mode="dark"] .arrow, html[data-dark-theme] .arrow, :root:not([data-light-theme]) .arrow {
+      color: #000;
+      filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff);
+    }
+    #importFile { display: none; }
     #delete { color: #fff; border-color: #be123c; background: #be123c; }
     dialog { width: min(420px, calc(100vw - 32px)); border: 1px solid var(--lp-border); border-radius: 7px;
       color: inherit; background: var(--lp-card); box-shadow: 0 18px 60px #0008; }
@@ -304,7 +341,11 @@ function renderHtml(profile, profiles, activeName) {
       <button id="new" class="neutral" title="Create new profile">＋ New</button>
     </div>
     <div class="profile-actions">
-      <a class="export" href="/api/export" title="Export active profile">⇩ Export</a>
+      <div class="transfer-actions">
+        <a class="export" href="/api/export" title="Export active profile"><span class="arrow">⬆</span> Export</a>
+        <button id="import" class="import" title="Import profile JSON"><span class="arrow">⬇</span> Import</button>
+        <input id="importFile" type="file" accept=".json,application/json">
+      </div>
       <button id="delete" title="Delete selected profile">❌ Delete</button>
     </div>
   </section>
@@ -391,6 +432,27 @@ function renderHtml(profile, profiles, activeName) {
   }
   document.querySelector("#profile").addEventListener("change", (event) =>
     run(() => post("/api/profile/switch", { name: event.target.value })));
+
+  const importFile = document.querySelector("#importFile");
+  document.querySelector("#import").addEventListener("click", () => importFile.click());
+  importFile.addEventListener("change", async () => {
+    if (!importFile.files.length) return;
+    try {
+      const payload = JSON.parse(await importFile.files[0].text());
+      try {
+        await post("/api/profile/import", { profile: payload, overwrite: false });
+      } catch (error) {
+        if (!error.message.includes("already exists")) throw error;
+        if (!confirm('A profile named "' + payload.name + '" already exists. Overwrite it?')) return;
+        await post("/api/profile/import", { profile: payload, overwrite: true });
+      }
+      location.reload();
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      importFile.value = "";
+    }
+  });
 
   const createDialog = document.querySelector("#createDialog");
   document.querySelector("#new").addEventListener("click", () => createDialog.showModal());
@@ -484,6 +546,11 @@ async function startServer() {
             if (request.method === "POST" && url.pathname === "/api/profile/delete") {
                 const body = await readBody(request);
                 sendJson(response, await deleteProfile(body.name));
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/api/profile/import") {
+                const body = await readBody(request);
+                sendJson(response, await importProfile(body.profile, body.overwrite === true));
                 return;
             }
             const profile = await loadProfile();
