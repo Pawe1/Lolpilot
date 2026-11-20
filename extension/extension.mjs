@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { promisify } from "node:util";
 import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { joinSession, createCanvas, CanvasError } from "@github/copilot-sdk/extension";
 
@@ -12,6 +14,7 @@ const ACTIVE_NAME_PATH = `${ROOT}\\active-profile.txt`;
 const IMAGE_CACHE_DIR = `${ROOT}\\cache\\images`;
 const MEME_INDEX_PATH = `${ROOT}\\cache\\meme-index.json`;
 const servers = new Map();
+const execFileAsync = promisify(execFile);
 
 const defaultProfile = {
     level: 2,
@@ -125,34 +128,82 @@ async function validateImageUrl(url) {
 async function fetchImageUrl(url) {
     let current = await validateImageUrl(url);
     for (let redirects = 0; redirects <= 3; redirects += 1) {
-        const response = await fetch(current, {
-        redirect: "manual",
-        headers: { accept: "image/png,image/jpeg,image/gif,image/webp" },
-        signal: AbortSignal.timeout(15000),
-        });
-        if (response.status >= 300 && response.status < 400) {
-            const location = response.headers.get("location");
-            if (!location) throw new CanvasError("image_url_failed", "Image redirect is missing a destination.");
-            current = await validateImageUrl(new URL(location, current).href);
-            continue;
+        const marker = "\n__LOLPILOT_HTTP__\n";
+        try {
+            const { stdout } = await execFileAsync("curl", [
+                "--silent",
+                "--show-error",
+                "--max-time", "20",
+                "--connect-timeout", "10",
+                "--max-filesize", String(8 * 1024 * 1024),
+                "--max-redirs", "0",
+                "--proto", "=http,https",
+                "--header", "Accept: image/png,image/jpeg,image/gif,image/webp,text/html;q=0.9",
+                "--output", "-",
+                "--write-out", `${marker}%{http_code}\n%{content_type}\n%{redirect_url}`,
+                current.href,
+            ], {
+                encoding: "buffer",
+                maxBuffer: 10 * 1024 * 1024,
+                windowsHide: true,
+            });
+            const markerBytes = Buffer.from(marker);
+            const markerIndex = stdout.lastIndexOf(markerBytes);
+            if (markerIndex < 0) {
+                throw new CanvasError("image_url_failed", "Could not read the image response metadata.");
+            }
+            const bytes = stdout.subarray(0, markerIndex);
+            const metadata = stdout.subarray(markerIndex + markerBytes.length).toString("utf8").split("\n");
+            const status = Number(metadata[0]);
+            const mimeType = metadata[1]?.split(";")[0].trim().toLowerCase();
+            const redirectUrl = metadata.slice(2).join("\n").trim();
+            if (status >= 300 && status < 400) {
+                if (!redirectUrl) {
+                    throw new CanvasError("image_url_failed", "Image redirect is missing a destination.");
+                }
+                current = await validateImageUrl(new URL(redirectUrl, current).href);
+                continue;
+            }
+            return { status, mimeType, bytes, parsed: current };
+        } catch (error) {
+            if (error instanceof CanvasError) throw error;
+            const detail = String(error?.stderr || error?.message || "Image download failed.")
+                .replace(/\s+/g, " ").slice(0, 240);
+            throw new CanvasError("image_url_failed", detail);
         }
-        return { response, parsed: current };
     }
     throw new CanvasError("image_url_failed", "Image URL redirected too many times.");
 }
 
 async function addMemeFromUrl(url) {
-    const { response, parsed } = await fetchImageUrl(url);
-    if (!response.ok) throw new CanvasError("image_url_failed", `Image URL returned HTTP ${response.status}.`);
-    const mimeType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+    let response = await fetchImageUrl(url);
+    let { parsed, mimeType } = response;
+    const sourceUrl = parsed.href;
+    if (mimeType === "text/html") {
+        if (response.bytes.length > 1024 * 1024) {
+            throw new CanvasError("image_page_too_large", "The page is too large to inspect for an image.");
+        }
+        const html = response.bytes.toString("utf8");
+        const candidates = [
+            html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["'][^>]*>/i),
+            html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["'][^>]*>/i),
+            html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["'][^>]*>/i),
+            html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["'][^>]*>/i),
+        ];
+        const imageUrl = candidates.find(Boolean)?.[1]?.replaceAll("&amp;", "&");
+        if (!imageUrl) {
+            throw new CanvasError("image_not_found", "The page does not advertise an image in og:image or twitter:image.");
+        }
+        response = await fetchImageUrl(new URL(imageUrl, parsed).href);
+        ({ parsed, mimeType } = response);
+    }
+    if (response.status < 200 || response.status >= 300) {
+        throw new CanvasError("image_url_failed", `Image URL returned HTTP ${response.status}.`);
+    }
     if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mimeType)) {
         throw new CanvasError("invalid_image_type", "The URL does not point to PNG, JPEG, GIF, or WebP.");
     }
-    const length = Number(response.headers.get("content-length") || 0);
-    if (length > 8 * 1024 * 1024) {
-        throw new CanvasError("invalid_image_size", "Image size must not exceed 8 MiB.");
-    }
-    const bytes = Buffer.from(await response.arrayBuffer());
+    const bytes = response.bytes;
     if (!bytes.length || bytes.length > 8 * 1024 * 1024) {
         throw new CanvasError("invalid_image_size", "Image size must be between 1 byte and 8 MiB.");
     }
@@ -161,7 +212,7 @@ async function addMemeFromUrl(url) {
         fileName,
         mimeType,
         dataUrl: `data:${mimeType};base64,${bytes.toString("base64")}`,
-        source: parsed.href,
+        source: sourceUrl,
     });
 }
 
@@ -507,6 +558,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     #importFile { display: none; }
     #delete { width: 104px; min-height: 42px; color: #fff; border-color: #be123c; background: #be123c; }
     .meme-grid { display: grid; gap: 8px; margin-top: 12px; }
+    .meme-status { min-height: 20px; margin-top: 9px; color: #dc2626; font-weight: 650; }
     .meme-card { display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; align-items: center; gap: 10px;
       padding: 8px; border: 1px solid var(--lp-border); border-radius: 5px; background: var(--lp-control); }
     .meme-card img { width: 70px; height: 54px; object-fit: cover; border-radius: 3px; background: #000; }
@@ -611,6 +663,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       </div>
       <input id="memeFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
     </div>
+    <div id="memeStatus" class="meme-status"></div>
     <div class="meme-grid">
       ${memeCards || '<p class="fine">No local memes yet.</p>'}
     </div>
@@ -671,6 +724,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     run(() => post("/api/profile/switch", { name: event.target.value })));
 
   const memeFile = document.querySelector("#memeFile");
+  const memeStatus = document.querySelector("#memeStatus");
   const addButton = document.querySelector("#addMeme");
   const addMenu = document.querySelector("#addMenu");
   addButton.addEventListener("click", () => addMenu.classList.toggle("open"));
@@ -679,10 +733,11 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     const url = prompt("Paste an image URL (PNG, JPEG, GIF, or WebP):");
     if (!url) return;
     try {
+      memeStatus.textContent = "Importing image…";
       await post("/api/meme/import-url", { url });
       location.reload();
     } catch (error) {
-      status.textContent = error.message;
+      memeStatus.textContent = error.message;
     }
   });
   document.querySelector("#addClipboard").addEventListener("click", async () => {
@@ -695,7 +750,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       const blob = await item.getType(type);
       await importMemeFile(new File([blob], "clipboard." + type.split("/")[1], { type }));
     } catch (error) {
-      status.textContent = error.message;
+      memeStatus.textContent = error.message;
     }
   });
   async function importMemeFile(file) {
@@ -713,7 +768,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       });
       location.reload();
     } catch (error) {
-      status.textContent = error.message;
+      memeStatus.textContent = error.message;
     }
   }
   memeFile.addEventListener("change", async () => {
@@ -736,7 +791,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     const file = [...event.dataTransfer.files].find((candidate) =>
       ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(candidate.type));
     if (file) await importMemeFile(file);
-    else status.textContent = "Drop a PNG, JPEG, GIF, or WebP image.";
+    else memeStatus.textContent = "Drop a PNG, JPEG, GIF, or WebP image.";
   });
   for (const button of document.querySelectorAll("[data-meme-delete]")) {
     button.addEventListener("click", () =>
