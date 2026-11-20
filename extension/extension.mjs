@@ -250,6 +250,93 @@ async function deleteMeme(id) {
     return { deleted: id };
 }
 
+async function updateMeme(id, changes) {
+    const index = await loadMemeIndex();
+    const image = index.images.find((candidate) => candidate.id === id);
+    if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+    Object.assign(image, changes, { updatedAt: new Date().toISOString() });
+    await saveMemeIndex(index);
+    return image;
+}
+
+async function analyzeMeme(id) {
+    const index = await loadMemeIndex();
+    const image = index.images.find((candidate) => candidate.id === id);
+    if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+    await updateMeme(id, { analysisStatus: "analyzing" });
+    const imagePath = `${IMAGE_CACHE_DIR}\\${image.file}`;
+    const schema = {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+            template: { type: "string" },
+            templateAliases: { type: "array", items: { type: "string" }, maxItems: 5 },
+            visualDescription: { type: "string" },
+            emotion: { type: "string" },
+            tone: { type: "array", items: { type: "string" }, maxItems: 5 },
+            captionRules: { type: "array", items: { type: "string" }, maxItems: 8 },
+            tags: { type: "array", items: { type: "string" }, maxItems: 16 },
+            confidence: { type: "number", minimum: 0, maximum: 1 },
+        },
+        required: [
+            "template", "templateAliases", "visualDescription", "emotion",
+            "tone", "captionRules", "tags", "confidence",
+        ],
+    };
+    try {
+        const result = await session.sendAndWait({
+            prompt: [
+                "Analyze this meme template for Lolpilot.",
+                "Identify the common template name if recognizable; otherwise say \"Unknown template\".",
+                "Describe only what is visually present, then list reusable caption structures and concise tags.",
+                "Do not infer sensitive personal traits, identity, health, or copyrighted ownership.",
+                "Return the structured result only.",
+            ].join(" "),
+            displayPrompt: "Analyzing a new Lolpilot meme template…",
+            source: "system",
+            mode: "enqueue",
+            attachments: [{ type: "file", path: imagePath, displayName: image.file }],
+            responseSchema: schema,
+        }, schema, 120000);
+        const confidence = Number(result?.confidence);
+        if (!result || !Number.isFinite(confidence)) {
+            throw new Error("The analysis result did not contain a valid confidence value.");
+        }
+        return updateMeme(id, {
+            template: String(result.template || "Unknown template").slice(0, 120),
+            templateAliases: (result.templateAliases || []).map((value) => String(value).slice(0, 120)).slice(0, 5),
+            visualDescription: String(result.visualDescription || "").slice(0, 500),
+            emotion: String(result.emotion || "").slice(0, 80),
+            tone: (result.tone || []).map((value) => String(value).slice(0, 60)).slice(0, 5),
+            captionRules: (result.captionRules || []).map((value) => String(value).slice(0, 180)).slice(0, 8),
+            tags: normalizeTags((result.tags || []).join(",")),
+            confidence,
+            analysisStatus: confidence < 0.55 ? "needs-review" : "analyzed",
+        });
+    } catch (error) {
+        await updateMeme(id, {
+            analysisStatus: "needs-review",
+            analysisError: String(error?.message || "Meme analysis failed.").slice(0, 240),
+        });
+        throw error;
+    }
+}
+
+async function analyzePendingMemes() {
+    const pending = (await loadMemeIndex()).images.filter((image) =>
+        ["pending", "needs-review"].includes(image.analysisStatus)
+    );
+    const results = [];
+    for (const image of pending) {
+        try {
+            results.push(await analyzeMeme(image.id));
+        } catch (error) {
+            results.push({ id: image.id, analysisStatus: "needs-review", error: String(error?.message || error) });
+        }
+    }
+    return results;
+}
+
 function normalizeName(name) {
     const normalized = String(name || "").trim().replace(/\s+/g, "-");
     if (!/^[a-z0-9][a-z0-9_-]{0,31}$/i.test(normalized)) {
@@ -486,7 +573,12 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         <img src="/api/meme/image?id=${encodeURIComponent(image.id)}" alt="${escapeHtml(image.clue || image.file)}">
         <div class="meme-copy">
           <strong>${escapeHtml(image.template || image.clue || "Awaiting analysis")}</strong>
-          <small>${escapeHtml(image.analysisStatus === "pending" ? "Queued for agent analysis" : (image.tags || []).join(" · ") || "No tags yet")}</small>
+          <small>${escapeHtml({
+              pending: "Queued for agent analysis",
+              analyzing: "Agent is analyzing…",
+              "needs-review": `Needs review · confidence ${Math.round((image.confidence || 0) * 100)}%`,
+              analyzed: `${image.emotion || "analyzed"} · ${Math.round((image.confidence || 0) * 100)}%`,
+          }[image.analysisStatus] || (image.tags || []).join(" · ") || "No tags yet")}</small>
         </div>
         <button class="meme-delete" data-meme-delete="${escapeHtml(image.id)}" title="Delete meme">❌</button>
       </article>
@@ -734,6 +826,12 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   document.querySelector("#profile").addEventListener("change", (event) =>
     run(() => post("/api/profile/switch", { name: event.target.value })));
 
+  async function importMemeResult(result) {
+    status.textContent = "Imported. Agent analysis will run next.";
+    await post("/api/meme/analyze", { id: result.id });
+    location.reload();
+  }
+
   const memeFile = document.querySelector("#memeFile");
   const memeStatus = document.querySelector("#memeStatus");
   const addButton = document.querySelector("#addMeme");
@@ -745,8 +843,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     if (!url) return;
     try {
       memeStatus.textContent = "Importing image…";
-      await post("/api/meme/import-url", { url });
-      location.reload();
+      importMemeResult(await post("/api/meme/import-url", { url }));
     } catch (error) {
       memeStatus.textContent = error.message;
     }
@@ -772,12 +869,12 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         reader.onerror = () => reject(new Error("Could not read the image."));
         reader.readAsDataURL(file);
       });
-      await post("/api/meme/import", {
+      const result = await post("/api/meme/import", {
         fileName: file.name,
         mimeType: file.type,
         dataUrl
       });
-      location.reload();
+      await importMemeResult(result);
     } catch (error) {
       memeStatus.textContent = error.message;
     }
@@ -938,6 +1035,11 @@ async function startServer() {
                 sendJson(response, await addMemeFromUrl(body.url));
                 return;
             }
+            if (request.method === "POST" && url.pathname === "/api/meme/analyze") {
+                const body = await readBody(request);
+                sendJson(response, await analyzeMeme(body.id));
+                return;
+            }
             if (request.method === "POST" && url.pathname === "/api/meme/delete") {
                 const body = await readBody(request);
                 sendJson(response, await deleteMeme(body.id));
@@ -992,6 +1094,11 @@ await joinSession({
                     name: "list_profiles",
                     description: "List saved Lolpilot profiles",
                     handler: async () => ({ active: await getActiveName(), profiles: await listProfiles() }),
+                },
+                {
+                    name: "analyze_pending_memes",
+                    description: "Analyze all pending Lolpilot memes with vision",
+                    handler: async () => analyzePendingMemes(),
                 },
                 {
                     name: "find_meme",
