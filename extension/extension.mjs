@@ -565,10 +565,30 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         reader.onerror = () => reject(new Error("Could not read the image."));
         reader.readAsDataURL(file);
       });
+      const perceptualHash = await new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => {
+          const canvas = document.createElement("canvas");
+          canvas.width = 16;
+          canvas.height = 16;
+          const context = canvas.getContext("2d", { willReadFrequently: true });
+          context.drawImage(image, 0, 0, 16, 16);
+          const pixels = context.getImageData(0, 0, 16, 16).data;
+          const luminance = [];
+          for (let index = 0; index < pixels.length; index += 4) {
+            luminance.push(pixels[index] * .299 + pixels[index + 1] * .587 + pixels[index + 2] * .114);
+          }
+          const average = luminance.reduce((sum, value) => sum + value, 0) / luminance.length;
+          resolve(luminance.map((value) => value >= average ? "1" : "0").join(""));
+        };
+        image.onerror = () => reject(new Error("Could not inspect the image."));
+        image.src = dataUrl;
+      });
       const result = await post("/api/meme/import", {
         fileName: file.name,
         mimeType: file.type,
-        dataUrl
+        dataUrl,
+        perceptualHash
       });
       await importMemeResult(result);
     } catch (error) {

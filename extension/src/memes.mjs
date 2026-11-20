@@ -4,12 +4,14 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { promisify } from "node:util";
 import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { CanvasError } from "@github/copilot-sdk/extension";
 import { ROOT, ANALYSIS_DIR, IMAGE_CACHE_DIR, MEME_INDEX_PATH } from "./config.mjs";
 
 const analysisWorkers = new Map();
 const MAX_ANALYSIS_WORKERS = 3;
+const execFileAsync = promisify(execFile);
 export async function loadMemeIndex() {
     try {
         const parsed = JSON.parse(await readFile(MEME_INDEX_PATH, "utf8"));
@@ -80,7 +82,19 @@ export function qualityScore(image) {
     return Number(image.byteSize || 0);
 }
 
-export async function addMeme({ fileName, mimeType, dataUrl, tags, clue, source = "local-import" }) {
+function perceptualDistance(left, right) {
+    if (!left?.perceptualHash || !right?.perceptualHash
+        || left.perceptualHash.length !== right.perceptualHash.length) return Number.POSITIVE_INFINITY;
+    let distance = 0;
+    for (let index = 0; index < left.perceptualHash.length; index += 1) {
+        if (left.perceptualHash[index] !== right.perceptualHash[index]) distance += 1;
+    }
+    return distance;
+}
+
+export async function addMeme({
+    fileName, mimeType, dataUrl, tags, clue, source = "local-import", perceptualHash = ""
+}) {
     if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mimeType)) {
         throw new CanvasError("invalid_image_type", "Use PNG, JPEG, GIF, or WebP.");
     }
@@ -95,6 +109,7 @@ export async function addMeme({ fileName, mimeType, dataUrl, tags, clue, source 
     const index = await loadMemeIndex();
     const existing = index.images.find((image) => image.hash === hash);
     if (existing) {
+        if (perceptualHash && !existing.perceptualHash) existing.perceptualHash = perceptualHash;
         const mergedTags = [...new Set([...existing.tags, ...normalizeTags(tags)])];
         existing.tags = mergedTags;
         existing.clue = String(clue || existing.clue || "").trim().slice(0, 240);
@@ -116,6 +131,7 @@ export async function addMeme({ fileName, mimeType, dataUrl, tags, clue, source 
         width: dimensions.width,
         height: dimensions.height,
         byteSize: bytes.length,
+        perceptualHash: /^[01]{256}$/.test(perceptualHash) ? perceptualHash : "",
         tags: normalizeTags(tags),
         clue: String(clue || "").trim().slice(0, 240),
         source: String(source || "local-import").trim().slice(0, 240),
@@ -463,12 +479,20 @@ export async function storeMemeAnalysis(id, content) {
         analysisError: "",
     });
     const index = await loadMemeIndex();
-    const sameTemplate = index.images.find((image) =>
-        image.id !== analyzed.id
-        && image.template
-        && analyzed.template.toLocaleLowerCase() !== "unknown template"
-        && image.template.toLocaleLowerCase() === analyzed.template.toLocaleLowerCase()
-    );
+    const sameTemplate = index.images.find((image) => {
+        if (image.id === analyzed.id) return false;
+        const candidateNames = [image.template, ...(image.templateAliases || [])]
+            .filter(Boolean).map((value) => value.toLocaleLowerCase());
+        const analyzedNames = [analyzed.template, ...(analyzed.templateAliases || [])]
+            .filter(Boolean).map((value) => value.toLocaleLowerCase());
+        const knownNameMatch = !analyzedNames.includes("unknown template")
+            && candidateNames.some((name) => analyzedNames.includes(name));
+        const descriptionMatch = image.visualDescription && analyzed.visualDescription
+            && normalizeTags(image.visualDescription).slice(0, 12).filter((tag) =>
+                normalizeTags(analyzed.visualDescription).includes(tag)
+            ).length >= 5;
+        return knownNameMatch || descriptionMatch || perceptualDistance(image, analyzed) <= 8;
+    });
     if (sameTemplate) {
         return updateMeme(id, {
             duplicateOf: sameTemplate.id,
