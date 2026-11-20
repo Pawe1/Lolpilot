@@ -916,7 +916,8 @@ async function startPreviewServer(_instanceId, image, caption = "") {
 <style>
   body { margin:0; min-height:100vh; overflow:auto; background:var(--background-color-default,#0f172a);
     color:var(--text-color-default,#f8fafc); font-family:var(--font-sans,Segoe UI,sans-serif); }
-  main { width:min(100%, 720px); margin:0 auto; padding:12px; }
+  main { width:min(100%, 720px); min-height:100vh; margin:0 auto; padding:12px;
+    display:flex; flex-direction:column; justify-content:center; }
   canvas { display:block; width:100%; height:auto; max-height:none; object-fit:contain; background:#000; }
   body.idle {
     background: linear-gradient(120deg, #f8fafc, #d1d5db, #f8fafc) !important;
@@ -925,7 +926,7 @@ async function startPreviewServer(_instanceId, image, caption = "") {
   }
   @keyframes idleWave { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
   @media (prefers-reduced-motion: reduce) { body.idle { animation:none; } }
-  .feedback { display:flex; justify-content:center; gap:10px; padding:0 0 4px; }
+  .feedback { display:flex; justify-content:center; gap:10px; margin-top:16px; padding:0 0 4px; }
   .feedback button { min-width:110px; min-height:40px; border:1px solid #475569; border-radius:5px;
     color:#111827; background:#fff; font:700 14px var(--font-sans,Segoe UI,sans-serif); cursor:pointer; }
   #hit, #miss { background:#fff; border-color:#d1d5db; }
