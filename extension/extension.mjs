@@ -1815,38 +1815,24 @@ async function startPreviewServer(_instanceId, image, caption = "") {
   }
   @keyframes idleWave { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
   @media (prefers-reduced-motion: reduce) { body.idle { animation:none; } }
-  .editor { display:grid; gap:8px; margin-top:10px; }
-  .editor input, .editor button { min-height:40px; border:1px solid #cbd5e1; border-radius:5px;
-    padding:8px 10px; color:#0f172a; background:#fff; font:600 14px var(--font-sans,Segoe UI,sans-serif); }
-  small { display:block; padding-bottom:8px; color:var(--text-color-muted,#9da7b3); }
   .feedback { display:flex; justify-content:center; gap:10px; padding:0 0 4px; }
   .feedback button { min-width:110px; min-height:40px; border:1px solid #475569; border-radius:5px;
     color:#111827; background:#fff; font:700 14px var(--font-sans,Segoe UI,sans-serif); cursor:pointer; }
   #hit, #miss { background:#fff; border-color:#d1d5db; }
   .feedback button.selected { outline:3px solid #8b5cf6; outline-offset:1px; }
-  .editor-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 </style></head><body>
 <main>
   <canvas id="preview" aria-label="${escapeHtml(image.template || "Meme editor")}"></canvas>
-  <div class="editor">
-    <input id="topText" maxlength="120" value="${escapeHtml(caption || "")}" placeholder="Top text">
-    <input id="bottomText" maxlength="120" placeholder="Bottom text">
-    <div class="editor-actions">
-      <button id="download">Download PNG</button>
-      <button id="clear">Clear text</button>
-    </div>
-  </div>
   <div class="feedback">
     <button id="miss" aria-label="Meh">👎</button>
     <button id="hit" aria-label="Hit">👍</button>
   </div>
-  <small>Preview stays local · PNG export is generated in your browser</small>
 </main>
 <script>
 const canvas = document.querySelector("#preview");
 const ctx = canvas.getContext("2d");
-const topText = document.querySelector("#topText");
-const bottomText = document.querySelector("#bottomText");
+const topText = { value: ${JSON.stringify(String(caption || ""))} };
+const bottomText = { value: "" };
 const source = new Image();
 source.onload = render;
 source.src = "/image";
@@ -1908,19 +1894,6 @@ async function rate(value) {
 }
 document.querySelector("#hit").addEventListener("click", () => rate("hit"));
 document.querySelector("#miss").addEventListener("click", () => rate("miss"));
-topText.addEventListener("input", render);
-bottomText.addEventListener("input", render);
-document.querySelector("#clear").addEventListener("click", () => {
-  topText.value = "";
-  bottomText.value = "";
-  render();
-});
-document.querySelector("#download").addEventListener("click", () => {
-  const link = document.createElement("a");
-  link.download = "${escapeHtml((image.template || "lolpilot-meme").replace(/[^a-z0-9_-]+/gi, "-"))}.png";
-  link.href = canvas.toDataURL("image/png");
-  link.click();
-});
 canvas.addEventListener("click", () => {
   document.body.innerHTML = "";
   document.body.className = "idle";
