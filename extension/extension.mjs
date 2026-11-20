@@ -799,6 +799,7 @@ function profileContext(profile) {
     return [
         "Lolpilot profile:",
         "This is user-facing chat. Respond normally in the user's language; never return a meme metadata JSON object.",
+        "Do not use emoji unless the user explicitly asks for emoji.",
         `humor level ${profile.level}/4`,
         `image preference: ${profile.images}`,
         `censor-safe mode: ${profile.censorSafe ? "on" : "off"}`,
