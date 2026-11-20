@@ -21,6 +21,7 @@ const servers = new Map();
 const execFileAsync = promisify(execFile);
 const analysisWorkers = new Map();
 const MAX_ANALYSIS_WORKERS = 3;
+let lastAssistantTurn = { id: "", completedAt: 0 };
 let BUILD_ID = "working-tree";
 try {
     const { stdout } = await execFileAsync("git", ["-C", ROOT, "rev-parse", "--short", "HEAD"]);
@@ -36,6 +37,7 @@ const defaultProfile = {
     lastReaction: "none",
     hits: 0,
     misses: 0,
+    ratedTurnId: "",
 };
 
 async function loadMemeIndex() {
@@ -592,6 +594,7 @@ function parseProfile(text) {
         lastReaction: value("Last reaction", "none"),
         hits: number("Hits", 0),
         misses: number("Misses", 0),
+        ratedTurnId: value("Rated turn", ""),
     };
 }
 
@@ -605,6 +608,7 @@ function profileMarkdown(profile) {
 - Last reaction: ${profile.lastReaction}
 - Hits: ${profile.hits}
 - Misses: ${profile.misses}
+- Rated turn: ${profile.ratedTurnId}
 - Style: concise, playful, technically precise
 - Never joke in commits, security findings, production incidents, or when safety is at stake
 `;
@@ -618,6 +622,7 @@ function normalizeProfile(profile) {
         lastReaction: String(profile.lastReaction || "none"),
         hits: Math.max(0, Number(profile.hits) || 0),
         misses: Math.max(0, Number(profile.misses) || 0),
+        ratedTurnId: String(profile.ratedTurnId || ""),
     };
 }
 
@@ -859,6 +864,13 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .tagline { margin: 1px 0 0; color: var(--lp-muted); }
     .card { margin: 12px 0; padding: 15px; border: 1px solid var(--lp-border); border-radius: 6px;
       background: var(--lp-card); box-shadow: 0 5px 18px #00000014; }
+    .react-card { position: relative; }
+    .answer-dot { position: absolute; top: 12px; right: 12px; width: 11px; height: 11px;
+      border-radius: 50%; background: #ef4444; box-shadow: 0 0 0 4px #ef444425; opacity: 0;
+      pointer-events: none; }
+    .answer-dot.live { opacity: 1; animation: answerSignal 5s linear forwards; }
+    @keyframes answerSignal { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+    .answer-status { min-height: 14px; margin-top: 5px; color: var(--lp-muted); font-size: 11px; text-align: right; }
     .eyebrow { color: #8b5cf6; font-size: 11px; font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
     .level { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 8px; }
     .level-name { width: 142px; min-width: 142px; font-size: 21px; font-weight: 750; text-transform: capitalize; }
@@ -1053,8 +1065,10 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         role="switch" aria-checked="${profile.censorSafe}" aria-label="Censor-safe"></button>
     </div>
   </section>
-  <section class="card">
+  <section class="card react-card">
     <div class="eyebrow">React to the last answer</div>
+    <span class="answer-dot" id="answerDot" title="A new assistant answer completed"></span>
+    <div class="answer-status" id="answerStatus"></div>
     <div class="buttons">
       <button class="good" data-reaction="trafione">😂 Hit</button>
       <button class="bad" data-reaction="meh">😐 Meh</button>
@@ -1170,6 +1184,35 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
 </main>
 <script>
   const status = document.querySelector("#status");
+  let currentTurnId = "";
+  let lastAnimatedTurnId = "";
+  const answerDot = document.querySelector("#answerDot");
+  const answerStatus = document.querySelector("#answerStatus");
+  async function refreshAnswerSignal() {
+    try {
+      const response = await fetch("/api/turn", { cache: "no-store" });
+      if (!response.ok) return;
+      const turn = await response.json();
+      if (!turn.id) return;
+      currentTurnId = turn.id;
+      const age = Date.now() - Number(turn.completedAt || 0);
+      if (lastAnimatedTurnId !== turn.id && age <= 5000) {
+        lastAnimatedTurnId = turn.id;
+        answerDot.classList.remove("live");
+        void answerDot.offsetWidth;
+        answerDot.classList.add("live");
+        answerStatus.textContent = "New answer ready to rate";
+        setTimeout(() => {
+          answerDot.classList.remove("live");
+          answerStatus.textContent = "";
+        }, 5000);
+      }
+    } catch {
+      // A temporary polling miss does not affect the rating controls.
+    }
+  }
+  setInterval(refreshAnswerSignal, 400);
+  refreshAnswerSignal();
   const libraryMode = new URLSearchParams(location.search).has("view") &&
     new URLSearchParams(location.search).get("view") === "library";
   if (libraryMode) document.body.classList.add("library-open");
@@ -1253,7 +1296,10 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     }
   }
   for (const button of document.querySelectorAll("[data-reaction]")) {
-    button.addEventListener("click", () => run(() => post("/api/reaction", { reaction: button.dataset.reaction })));
+    button.addEventListener("click", () => run(() => post("/api/reaction", {
+      reaction: button.dataset.reaction,
+      turnId: currentTurnId,
+    })));
   }
   document.querySelector("#profile").addEventListener("change", (event) =>
     run(() => post("/api/profile/switch", { name: event.target.value })));
@@ -1477,7 +1523,13 @@ async function startServer() {
             }
             if (request.method === "POST" && url.pathname === "/api/reaction") {
                 const body = await readBody(request);
-                sendJson(response, await saveActiveProfile(applyReaction(await loadProfile(), body.reaction)));
+                const next = applyReaction(await loadProfile(), body.reaction);
+                if (["trafione", "meh"].includes(body.reaction)) next.ratedTurnId = String(body.turnId || "");
+                sendJson(response, await saveActiveProfile(next));
+                return;
+            }
+            if (request.method === "GET" && url.pathname === "/api/turn") {
+                sendJson(response, lastAssistantTurn);
                 return;
             }
             if (request.method === "POST" && url.pathname === "/api/profile/create") {
@@ -1672,4 +1724,13 @@ const session = await joinSession({
             return { additionalContext: context.join(" ") };
         },
     },
+});
+
+session.on("assistant.message", (event) => {
+    const messageId = String(event.data.messageId || "");
+    if (!messageId || event.data.toolRequests?.length) return;
+    lastAssistantTurn = {
+        id: messageId,
+        completedAt: Date.now(),
+    };
 });
