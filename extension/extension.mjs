@@ -14,9 +14,11 @@ const PROFILES_DIR = `${ROOT}\\profiles`;
 const ACTIVE_NAME_PATH = `${ROOT}\\active-profile.txt`;
 const IMAGE_CACHE_DIR = `${ROOT}\\cache\\images`;
 const MEME_INDEX_PATH = `${ROOT}\\cache\\meme-index.json`;
+const ANALYSIS_DIR = `${ROOT}\\cache\\analysis`;
 const servers = new Map();
 const execFileAsync = promisify(execFile);
-const analysisRequests = new Map();
+const CURATOR_NAME = "Lolpilot Meme Curator";
+let curatorSessionId;
 let BUILD_ID = "working-tree";
 try {
     const { stdout } = await execFileAsync("git", ["-C", ROOT, "rev-parse", "--short", "HEAD"]);
@@ -60,6 +62,51 @@ function normalizeTags(tags) {
         .slice(0, 24);
 }
 
+function imageDimensions(mimeType, bytes) {
+    try {
+        if (mimeType === "image/png" && bytes.length >= 24) {
+            return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+        }
+        if (mimeType === "image/gif" && bytes.length >= 10) {
+            return { width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8) };
+        }
+        if (mimeType === "image/jpeg") {
+            let offset = 2;
+            while (offset + 9 < bytes.length) {
+                if (bytes[offset] !== 0xff) {
+                    offset += 1;
+                    continue;
+                }
+                const marker = bytes[offset + 1];
+                const length = bytes.readUInt16BE(offset + 2);
+                const isSizeMarker = marker >= 0xc0 && marker <= 0xc3;
+                if (isSizeMarker && offset + 8 < bytes.length) {
+                    return { height: bytes.readUInt16BE(offset + 5), width: bytes.readUInt16BE(offset + 7) };
+                }
+                offset += 2 + length;
+            }
+        }
+        if (mimeType === "image/webp" && bytes.length >= 30 && bytes.toString("ascii", 0, 4) === "RIFF") {
+            const kind = bytes.toString("ascii", 12, 16);
+            if (kind === "VP8X") {
+                return {
+                    width: 1 + bytes.readUIntLE(24, 3),
+                    height: 1 + bytes.readUIntLE(27, 3),
+                };
+            }
+        }
+    } catch {
+        // Dimensions are a quality hint; indexing the image still works without them.
+    }
+    return { width: 0, height: 0 };
+}
+
+function qualityScore(image) {
+    const pixels = Number(image.width || 0) * Number(image.height || 0);
+    if (pixels > 0) return pixels + Math.min(Number(image.byteSize || 0), 8 * 1024 * 1024) / 1000;
+    return Number(image.byteSize || 0);
+}
+
 async function addMeme({ fileName, mimeType, dataUrl, tags, clue, source = "local-import" }) {
     if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mimeType)) {
         throw new CanvasError("invalid_image_type", "Use PNG, JPEG, GIF, or WebP.");
@@ -82,6 +129,7 @@ async function addMeme({ fileName, mimeType, dataUrl, tags, clue, source = "loca
         return existing;
     }
     const id = hash.slice(0, 16);
+    const dimensions = imageDimensions(mimeType, bytes);
     const safeBase = String(fileName || "meme").replace(/\.[^.]+$/, "").replace(/[^a-z0-9_-]+/gi, "-")
         .replace(/^-+|-+$/g, "").slice(0, 40) || "meme";
     const file = `${safeBase}-${id}.${extension}`;
@@ -92,6 +140,9 @@ async function addMeme({ fileName, mimeType, dataUrl, tags, clue, source = "loca
         file,
         mimeType,
         hash,
+        width: dimensions.width,
+        height: dimensions.height,
+        byteSize: bytes.length,
         tags: normalizeTags(tags),
         clue: String(clue || "").trim().slice(0, 240),
         source: String(source || "local-import").trim().slice(0, 240),
@@ -261,48 +312,92 @@ async function updateMeme(id, changes) {
     return image;
 }
 
+async function syncAnalysisResults() {
+    await mkdir(ANALYSIS_DIR, { recursive: true });
+    let changed = 0;
+    for (const name of await readdir(ANALYSIS_DIR)) {
+        if (!name.endsWith(".json")) continue;
+        const path = `${ANALYSIS_DIR}\\${name}`;
+        try {
+            const result = JSON.parse(await readFile(path, "utf8"));
+            if (!result.id) throw new Error("Analysis result is missing id.");
+            await storeMemeAnalysis(result.id, JSON.stringify(result));
+            await unlink(path);
+            changed += 1;
+        } catch (error) {
+            const id = name.slice(0, -5);
+            try {
+                await updateMeme(id, {
+                    analysisStatus: "needs-review",
+                    analysisError: String(error?.message || error).slice(0, 240),
+                });
+            } catch {
+                await unlink(path).catch(() => {});
+            }
+        }
+    }
+    return changed;
+}
+
+function curatorPrompt(image) {
+    const outputPath = `${ANALYSIS_DIR}\\${image.id}.json`;
+    return [
+        "You are Lolpilot Meme Curator, a specialist in meme templates, visual reactions, pop culture, workplace humor, software engineering, and internet culture.",
+        "Do not modify the Lolpilot extension or repository code.",
+        `Inspect the local image at "${IMAGE_CACHE_DIR}\\${image.file}" with vision.`,
+        "Identify the common template name if recognizable; otherwise use Unknown template.",
+        "Describe only visual evidence. Do not infer sensitive personal traits, identity, health, or ownership.",
+        "Write exactly one JSON object to this absolute output path:",
+        `"${outputPath}"`,
+        "Required shape: { template, templateAliases, visualDescription, emotion, tone, captionRules, tags, confidence, id }.",
+        `Set id to "${image.id}".`,
+        "templateAliases is at most 5 strings; tone at most 5; captionRules at most 8; tags at most 16; confidence is 0..1.",
+        "Return no conversational reply beyond confirming the file was written.",
+    ].join(" ");
+}
+
+async function ensureCuratorSession(image) {
+    const management = session.rpc.sessionManagement;
+    await management.configure({
+        enabled: true,
+        scope: "in-process",
+        tools: { list: true, create: true, message: true },
+        hasCreateHandler: false,
+    });
+    if (curatorSessionId) return { sessionId: curatorSessionId, created: false };
+    const { sessions } = await management.list({ cwd: ROOT });
+    const existing = sessions.find((candidate) =>
+        candidate.name === CURATOR_NAME
+        && candidate.cwd.toLocaleLowerCase() === ROOT.toLocaleLowerCase()
+    );
+    if (existing) {
+        curatorSessionId = existing.sessionId;
+        return { sessionId: curatorSessionId, created: false };
+    }
+    const created = await management.create({
+        name: CURATOR_NAME,
+        cwd: ROOT,
+        prompt: curatorPrompt(image),
+    });
+    curatorSessionId = created.sessionId;
+    return { sessionId: curatorSessionId, created: true };
+}
+
 async function analyzeMeme(id) {
     const index = await loadMemeIndex();
     const image = index.images.find((candidate) => candidate.id === id);
     if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
     if (image.analysisStatus === "analyzing") return image;
     await updateMeme(id, { analysisStatus: "analyzing" });
-    const imagePath = `${IMAGE_CACHE_DIR}\\${image.file}`;
-    const schema = {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-            template: { type: "string" },
-            templateAliases: { type: "array", items: { type: "string" }, maxItems: 5 },
-            visualDescription: { type: "string" },
-            emotion: { type: "string" },
-            tone: { type: "array", items: { type: "string" }, maxItems: 5 },
-            captionRules: { type: "array", items: { type: "string" }, maxItems: 8 },
-            tags: { type: "array", items: { type: "string" }, maxItems: 16 },
-            confidence: { type: "number", minimum: 0, maximum: 1 },
-        },
-        required: [
-            "template", "templateAliases", "visualDescription", "emotion",
-            "tone", "captionRules", "tags", "confidence",
-        ],
-    };
     try {
-        const messageId = await session.send({
-            prompt: [
-                "Analyze this meme template for Lolpilot.",
-                "Identify the common template name if recognizable; otherwise say \"Unknown template\".",
-                "Describe only what is visually present, then list reusable caption structures and concise tags.",
-                "Do not infer sensitive personal traits, identity, health, or copyrighted ownership.",
-                "Return the structured result only.",
-            ].join(" "),
-            displayPrompt: "Analyzing a new Lolpilot meme template…",
-            source: "system",
-            mode: "enqueue",
-            attachments: [{ type: "file", path: imagePath, displayName: image.file }],
-            responseSchema: schema,
-        });
-        analysisRequests.set(messageId, id);
-        return { ...image, analysisStatus: "analyzing", messageId };
+        const curator = await ensureCuratorSession(image);
+        if (!curator.created) {
+            await session.rpc.sessionManagement.message({
+                targetSessionId: curator.sessionId,
+                message: curatorPrompt(image),
+            });
+        }
+        return { ...image, analysisStatus: "analyzing", curatorSessionId: curator.sessionId };
     } catch (error) {
         await updateMeme(id, {
             analysisStatus: "needs-review",
@@ -328,7 +423,7 @@ async function storeMemeAnalysis(id, content) {
     if (!result || !Number.isFinite(confidence)) {
         throw new Error("The analysis result did not contain a valid confidence value.");
     }
-    return updateMeme(id, {
+    const analyzed = await updateMeme(id, {
         template: String(result.template || "Unknown template").slice(0, 120),
         templateAliases: (result.templateAliases || []).map((value) => String(value).slice(0, 120)).slice(0, 5),
         visualDescription: String(result.visualDescription || "").slice(0, 500),
@@ -340,6 +435,42 @@ async function storeMemeAnalysis(id, content) {
         analysisStatus: confidence < 0.55 ? "needs-review" : "analyzed",
         analysisError: "",
     });
+    const index = await loadMemeIndex();
+    const sameTemplate = index.images.find((image) =>
+        image.id !== analyzed.id
+        && image.template
+        && image.template.toLocaleLowerCase() === analyzed.template.toLocaleLowerCase()
+    );
+    if (sameTemplate) {
+        return updateMeme(id, {
+            duplicateOf: sameTemplate.id,
+            replacementSuggested: qualityScore(analyzed) > qualityScore(sameTemplate),
+            analysisStatus: "needs-review",
+            analysisError: `Similar template already exists: ${sameTemplate.template}.`,
+        });
+    }
+    return analyzed;
+}
+
+async function replaceMeme(existingId, replacementId) {
+    const index = await loadMemeIndex();
+    const existing = index.images.find((image) => image.id === existingId);
+    const replacement = index.images.find((image) => image.id === replacementId);
+    if (!existing || !replacement) throw new CanvasError("meme_not_found", "Replacement record was not found.");
+    const mergedTags = [...new Set([...(existing.tags || []), ...(replacement.tags || [])])];
+    await unlink(`${IMAGE_CACHE_DIR}\\${existing.file}`);
+    index.images = index.images.filter((image) => image.id !== existingId);
+    replacement.templateAliases = [...new Set([
+        ...(replacement.templateAliases || []),
+        existing.template,
+        ...(existing.templateAliases || []),
+    ].filter(Boolean))].slice(0, 8);
+    replacement.tags = mergedTags;
+    replacement.duplicateOf = "";
+    replacement.replacementSuggested = false;
+    replacement.analysisStatus = replacement.confidence < 0.55 ? "needs-review" : "analyzed";
+    await saveMemeIndex(index);
+    return replacement;
 }
 
 async function analyzePendingMemes() {
@@ -603,6 +734,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     ).join("");
     const memeCards = memeIndex.images.map((image) => `
       <button class="meme-card ${image.analysisStatus === "analyzing" ? "analyzing" : ""}"
+        data-status="${escapeHtml(image.analysisStatus)}"
         data-meme-id="${escapeHtml(image.id)}" data-meme='${escapeHtml(JSON.stringify(image))}'>
         <span class="status-dot status-${escapeHtml(image.analysisStatus)}"
           title="${escapeHtml(image.analysisStatus)}" aria-label="${escapeHtml(image.analysisStatus)}"></span>
@@ -665,7 +797,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       border-radius: 6px; background: ${profile.censorSafe ? "#16a34a18" : "#dc26261a"}; }
     .censor-copy strong, .censor-copy small { display: block; }
     .censor-copy small { color: var(--lp-muted); }
-    .censor-switch { position: relative; width: 58px; height: 30px; flex: 0 0 auto; padding: 0; border-radius: 999px;
+    .censor-switch { position: relative; width: 58px; height: 30px; min-height: 30px; flex: 0 0 auto; padding: 0;
+      overflow: hidden; border-radius: 999px;
       border: 2px solid ${profile.censorSafe ? "#16a34a" : "#dc2626"};
       background: ${profile.censorSafe ? "#16a34a" : "#dc2626"}; }
     .censor-switch::after { content: ""; position: absolute; top: 3px; left: ${profile.censorSafe ? "29px" : "3px"};
@@ -734,6 +867,9 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     body.library-open .library-page > .card { margin: 0; }
     .library-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
     .library-header h2 { margin: 0; flex: 1; }
+    .library-filters { display: grid; grid-template-columns: auto 170px minmax(160px, 1fr) auto; align-items: center;
+      gap: 8px; margin-bottom: 10px; }
+    .library-filters select { width: auto; min-width: 170px; }
     .meme-detail { max-width: min(620px, calc(100vw - 28px)); }
     .meme-detail img { display: block; width: 100%; max-height: 55vh; object-fit: contain; border-radius: 5px; background: #000; }
     .meme-detail dl { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 7px 12px; }
@@ -762,6 +898,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       .meter { width: 100%; }
       .add-menu { grid-template-columns: 1fr; }
       .meme-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .library-filters { grid-template-columns: 1fr; }
+      .library-filters select { width: 100%; }
     }
   </style>
 </head>
@@ -803,17 +941,17 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     </div>
     <div class="censor-toggle">
       <div class="censor-copy">
-        <strong>Cenzuralnie</strong>
-        <small class="censor-status">${profile.censorSafe ? "ON · clean mode" : "OFF · spicy mode"}</small>
+        <strong>Censor-safe</strong>
+        <small class="censor-status">${profile.censorSafe ? "ON · clean mode" : "OFF · flexible mode"}</small>
       </div>
       <button class="censor-switch" data-reaction="${profile.censorSafe ? "censor-off" : "censor-safe"}"
-        role="switch" aria-checked="${profile.censorSafe}" aria-label="Cenzuralnie"></button>
+        role="switch" aria-checked="${profile.censorSafe}" aria-label="Censor-safe"></button>
     </div>
   </section>
   <section class="card">
     <div class="eyebrow">React to the last answer</div>
     <div class="buttons">
-      <button class="good" data-reaction="trafione">😂 Trafione</button>
+      <button class="good" data-reaction="trafione">😂 Hit</button>
       <button class="bad" data-reaction="meh">😐 Meh</button>
     </div>
   </section>
@@ -847,6 +985,18 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <button id="closeLibrary">← Back</button>
       <h2>Meme library</h2>
       <span class="fine">${memeIndex.images.length} templates</span>
+    </div>
+    <div class="library-filters">
+      <label for="statusFilter">Status</label>
+      <select id="statusFilter">
+        <option value="all">All</option>
+        <option value="analyzed">Analyzed</option>
+        <option value="needs-review">Needs review</option>
+        <option value="analyzing">Analyzing</option>
+        <option value="pending">Pending</option>
+      </select>
+      <input id="memeSearch" type="search" placeholder="Search template, tags, emotion…">
+      <span id="filterCount" class="fine"></span>
     </div>
     <section class="card library-card">
       <div class="eyebrow">Add template</div>
@@ -911,6 +1061,45 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     history.replaceState(null, "", location.pathname);
     document.body.classList.remove("library-open");
   });
+  const statusFilter = document.querySelector("#statusFilter");
+  const memeSearch = document.querySelector("#memeSearch");
+  let memeSignature = "";
+  async function refreshMemeStatus() {
+    try {
+      const response = await fetch("/api/memes/status", { cache: "no-store" });
+      if (!response.ok) return;
+      const state = await response.json();
+      if (memeSignature && state.signature !== memeSignature) location.assign("?view=library");
+      memeSignature = state.signature;
+    } catch {
+      // A transient panel reload is not a user-facing error.
+    }
+  }
+  function filterLibrary() {
+    const cards = [...document.querySelectorAll("[data-meme-id]")];
+    const query = memeSearch.value.trim().toLowerCase();
+    let visible = 0;
+    for (const card of cards) {
+      const meme = JSON.parse(card.dataset.meme);
+      const haystack = [
+        meme.template, meme.file, meme.emotion, meme.visualDescription,
+        ...(meme.templateAliases || []), ...(meme.tone || []), ...(meme.tags || []),
+      ].filter(Boolean).join(" ").toLowerCase();
+      const show = (statusFilter.value === "all" || card.dataset.status === statusFilter.value)
+        && (!query || haystack.includes(query));
+      card.hidden = !show;
+      if (show) visible += 1;
+    }
+    document.querySelector("#filterCount").textContent =
+      visible + " of " + cards.length + " shown";
+  }
+  statusFilter.addEventListener("change", filterLibrary);
+  memeSearch.addEventListener("input", filterLibrary);
+  filterLibrary();
+  if (libraryMode) {
+    refreshMemeStatus();
+    setInterval(refreshMemeStatus, 2500);
+  }
   async function post(path, body) {
     const response = await fetch(path, {
       method: "POST",
@@ -1177,6 +1366,17 @@ async function startServer() {
                 sendJson(response, await analyzeMeme(body.id));
                 return;
             }
+            if (request.method === "GET" && url.pathname === "/api/memes/status") {
+                const changed = await syncAnalysisResults();
+                const index = await loadMemeIndex();
+                sendJson(response, {
+                    changed,
+                    signature: index.images
+                        .map((image) => `${image.id}:${image.analysisStatus}:${image.updatedAt || ""}`)
+                        .join("|"),
+                });
+                return;
+            }
             if (request.method === "POST" && url.pathname === "/api/meme/delete") {
                 const body = await readBody(request);
                 sendJson(response, await deleteMeme(body.id));
@@ -1201,6 +1401,7 @@ async function startServer() {
             const profile = await loadProfile();
             const profiles = await listProfiles();
             const activeName = await getActiveName();
+            await syncAnalysisResults();
             const memeIndex = await loadMemeIndex();
             response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
             response.end(renderHtml(profile, profiles, activeName, memeIndex));
@@ -1305,23 +1506,4 @@ const session = await joinSession({
             return { additionalContext: context.join(" ") };
         },
     },
-});
-
-session.on("assistant.message", async (event) => {
-    const messageId = event.data.originatingMessageId;
-    if (!messageId) return;
-    const imageId = analysisRequests.get(messageId);
-    if (!imageId) return;
-    try {
-        await storeMemeAnalysis(imageId, event.data.content);
-        analysisRequests.delete(messageId);
-        await session.log(`Lolpilot analyzed meme ${imageId}.`, { ephemeral: true });
-    } catch (error) {
-        if (event.data.toolRequests?.length) return;
-        await updateMeme(imageId, {
-            analysisStatus: "needs-review",
-            analysisError: String(error?.message || error).slice(0, 240),
-        });
-        analysisRequests.delete(messageId);
-    }
 });
