@@ -1169,8 +1169,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <strong class="level-value">${profile.level}/4</strong>
     </div>
     <div class="buttons">
-      <button class="cool" data-reaction="humor-">🧊 Dial it down</button>
-      <button class="hot" data-reaction="humor+">🔥 More chaos</button>
+      <button class="cool" data-reaction="humor-" ${profile.level === 0 ? "disabled" : ""}>🧊 Dial it down</button>
+      <button class="hot" data-reaction="humor+" ${profile.level === 4 ? "disabled" : ""}>🔥 More chaos</button>
       <button class="neutral wide" data-reaction="humor-stop">🧑‍💼 Full serious mode</button>
     </div>
     <div class="censor-toggle">
