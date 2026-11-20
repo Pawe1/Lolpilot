@@ -28,6 +28,7 @@ try {
 const defaultProfile = {
     level: 2,
     images: "rare",
+    censorSafe: true,
     lastReaction: "none",
     hits: 0,
     misses: 0,
@@ -380,6 +381,7 @@ function parseProfile(text) {
     return {
         level: Math.max(0, Math.min(3, Number.parseInt(value("Level", "2/3"), 10))),
         images: value("Images", "rare"),
+        censorSafe: value("Censor-safe", "true").toLowerCase() !== "false",
         lastReaction: value("Last reaction", "none"),
         hits: number("Hits", 0),
         misses: number("Misses", 0),
@@ -392,6 +394,7 @@ function profileMarkdown(profile) {
 - Owner: PC
 - Level: ${profile.level}/3
 - Images: ${profile.images}
+- Censor-safe: ${profile.censorSafe}
 - Last reaction: ${profile.lastReaction}
 - Hits: ${profile.hits}
 - Misses: ${profile.misses}
@@ -404,6 +407,7 @@ function normalizeProfile(profile) {
     return {
         level: Math.max(0, Math.min(3, Number(profile.level ?? defaultProfile.level))),
         images: ["rare", "often", "never"].includes(profile.images) ? profile.images : defaultProfile.images,
+        censorSafe: profile.censorSafe !== false,
         lastReaction: String(profile.lastReaction || "none"),
         hits: Math.max(0, Number(profile.hits) || 0),
         misses: Math.max(0, Number(profile.misses) || 0),
@@ -560,6 +564,12 @@ function applyReaction(profile, reaction) {
         case "images-off":
             next.images = "never";
             break;
+        case "censor-safe":
+            next.censorSafe = true;
+            break;
+        case "censor-off":
+            next.censorSafe = false;
+            break;
         default:
             throw new CanvasError("invalid_reaction", `Unknown reaction: ${reaction}`);
     }
@@ -571,8 +581,12 @@ function profileContext(profile) {
         "Lolpilot profile:",
         `humor level ${profile.level}/3`,
         `image preference: ${profile.images}`,
+        `censor-safe mode: ${profile.censorSafe ? "on" : "off"}`,
         `last reaction: ${profile.lastReaction}`,
         "Be concise and technically precise. Never let humor obscure findings, risks, safety, or commits.",
+        profile.censorSafe
+            ? "Keep profanity, sexual references, slurs, and graphic language out of humor."
+            : "Censor-safe mode is off; do not force profanity or spicy language. Choose whatever tone fits the joke, while still avoiding slurs and harassment.",
         "Prefer an image or meme only when image preference allows it and the image materially improves the response.",
     ].join("; ");
 }
@@ -652,6 +666,17 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     button.cool { color: #fff; border-color: #0369a1; background: #0369a1; }
     button.neutral { color: #fff; border-color: #5b21b6; background: #5b21b6; }
     button.selected { outline: 3px solid #f59e0b; outline-offset: 1px; }
+    .censor-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 13px;
+      padding: 10px 12px; border: 2px solid ${profile.censorSafe ? "#16a34a" : "#dc2626"};
+      border-radius: 6px; background: ${profile.censorSafe ? "#16a34a18" : "#dc26261a"}; }
+    .censor-copy strong, .censor-copy small { display: block; }
+    .censor-copy small { color: var(--lp-muted); }
+    .censor-switch { position: relative; width: 58px; height: 30px; flex: 0 0 auto; padding: 0; border-radius: 999px;
+      border: 2px solid ${profile.censorSafe ? "#16a34a" : "#dc2626"};
+      background: ${profile.censorSafe ? "#16a34a" : "#dc2626"}; }
+    .censor-switch::after { content: ""; position: absolute; top: 3px; left: ${profile.censorSafe ? "29px" : "3px"};
+      width: 20px; height: 20px; border-radius: 50%; background: white; transition: left .15s ease; }
+    .censor-status { font-weight: 800; color: ${profile.censorSafe ? "#16a34a" : "#dc2626"}; }
     button.wide { grid-column: 1 / -1; }
     .profile-card { padding: 12px 14px; }
     .profile-label { display: block; margin-bottom: 5px; color: var(--lp-muted); font-size: 11px;
@@ -771,6 +796,14 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <button class="cool" data-reaction="humor-">🧊 Dial it down</button>
       <button class="hot" data-reaction="humor+">🔥 More chaos</button>
       <button class="neutral wide" data-reaction="humor-stop">🧑‍💼 Full serious mode</button>
+    </div>
+    <div class="censor-toggle">
+      <div class="censor-copy">
+        <strong>Cenzuralnie</strong>
+        <small class="censor-status">${profile.censorSafe ? "ON · clean mode" : "OFF · spicy mode"}</small>
+      </div>
+      <button class="censor-switch" data-reaction="${profile.censorSafe ? "censor-off" : "censor-safe"}"
+        role="switch" aria-checked="${profile.censorSafe}" aria-label="Cenzuralnie"></button>
     </div>
   </section>
   <section class="card">
@@ -1176,7 +1209,7 @@ const session = await joinSession({
                         properties: {
                             reaction: {
                                 type: "string",
-                                enum: ["trafione", "meh", "humor+", "humor-", "humor-stop", "images-on", "images-rare", "images-off"],
+                                enum: ["trafione", "meh", "humor+", "humor-", "humor-stop", "images-on", "images-rare", "images-off", "censor-safe", "censor-off"],
                             },
                         },
                         required: ["reaction"],
