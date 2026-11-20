@@ -269,8 +269,9 @@ function renderHtml(profile, profiles, activeName) {
     .profile-card { padding: 12px 14px; }
     .profile-label { display: block; margin-bottom: 5px; color: var(--lp-muted); font-size: 11px;
       font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-    .profile-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 7px; }
+    .profile-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
     .profile-row button, .profile-row .export { min-width: 42px; padding: 8px 10px; }
+    .profile-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
     select, input { width: 100%; padding: 8px 10px; }
     .stats { display: flex; flex-wrap: wrap; gap: 18px; color: var(--lp-muted); }
     .stats strong { color: inherit; }
@@ -278,6 +279,7 @@ function renderHtml(profile, profiles, activeName) {
     .fine { color: var(--lp-muted); font-size: 12px; }
     a.export { display: inline-grid; place-items: center; min-height: 42px; padding: 8px 12px; border: 1px solid var(--lp-border);
       border-radius: 5px; color: inherit; background: var(--lp-control); font-weight: 700; text-decoration: none; }
+    #delete { color: #fff; border-color: #be123c; background: #be123c; }
     dialog { width: min(420px, calc(100vw - 32px)); border: 1px solid var(--lp-border); border-radius: 7px;
       color: inherit; background: var(--lp-card); box-shadow: 0 18px 60px #0008; }
     dialog::backdrop { background: #0009; backdrop-filter: blur(2px); }
@@ -299,9 +301,11 @@ function renderHtml(profile, profiles, activeName) {
     <label class="profile-label" for="profile">Selected profile</label>
     <div class="profile-row">
       <select id="profile">${options}</select>
-      <button id="new" class="neutral" title="Create new profile" aria-label="Create new profile">＋</button>
-      <a class="export" href="/api/export" title="Export active profile" aria-label="Export active profile">⇩</a>
-      <button id="delete" title="Delete selected profile" aria-label="Delete selected profile">⌫</button>
+      <button id="new" class="neutral" title="Create new profile">＋ New</button>
+    </div>
+    <div class="profile-actions">
+      <a class="export" href="/api/export" title="Export active profile">⇩ Export</a>
+      <button id="delete" title="Delete selected profile">❌ Delete</button>
     </div>
   </section>
 
