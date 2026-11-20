@@ -400,7 +400,6 @@ async function analyzeMeme(id) {
             "--allow-all-tools",
             "--trust-folder",
             "--model=auto",
-            "--reasoning-effort=low",
             `--name=Lolpilot-Meme-Curator-${id}`,
             "--disable-client-telemetry",
         ], {
