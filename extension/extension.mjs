@@ -1035,7 +1035,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     <div class="level">
       <div class="level-name">${escapeHtml(levels[profile.level])}</div>
       <div class="meter">${levels.slice(1).map((_, index) =>
-        `<div class="bar ${index < profile.level ? (index === 3 ? "dark-on" : "on") : ""}"></div>`
+        `<div class="bar ${index < profile.level ? (profile.level === 4 ? "dark-on" : "on") : ""}"></div>`
       ).join("")}</div>
       <strong class="level-value">${profile.level}/4</strong>
     </div>
