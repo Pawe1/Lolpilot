@@ -284,7 +284,7 @@ async function analyzeMeme(id) {
         ],
     };
     try {
-        const result = await session.sendAndWait({
+        const response = await session.sendAndWait({
             prompt: [
                 "Analyze this meme template for Lolpilot.",
                 "Identify the common template name if recognizable; otherwise say \"Unknown template\".",
@@ -297,7 +297,15 @@ async function analyzeMeme(id) {
             mode: "enqueue",
             attachments: [{ type: "file", path: imagePath, displayName: image.file }],
             responseSchema: schema,
-        }, schema, 120000);
+        }, 120000);
+        const content = String(response?.data?.content || "").trim();
+        let result;
+        try {
+            result = JSON.parse(content);
+        } catch {
+            const jsonMatch = content.match(/\{[\s\S]*\}/);
+            result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+        }
         const confidence = Number(result?.confidence);
         if (!result || !Number.isFinite(confidence)) {
             throw new Error("The analysis result did not contain a valid confidence value.");
