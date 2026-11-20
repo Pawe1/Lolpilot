@@ -187,6 +187,11 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .meme-detail dl { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 7px 12px; }
     .meme-detail dt { color: var(--lp-muted); }
     .meme-detail dd { margin: 0; overflow-wrap: anywhere; }
+    .identity-hint { display:grid; gap:8px; margin-top:12px; }
+    .identity-hint textarea { min-height:64px; resize:vertical; border:1px solid var(--lp-border); border-radius:5px;
+      padding:9px 10px; background:var(--lp-control); color:inherit; font:14px var(--font-sans,Segoe UI,sans-serif); }
+    .identity-hint button { min-height:38px; border:1px solid var(--lp-border); border-radius:5px;
+      background:var(--lp-control); color:inherit; font-weight:700; }
     dialog { width: min(420px, calc(100vw - 32px)); border: 1px solid var(--lp-border); border-radius: 7px;
       color: inherit; background: var(--lp-card); box-shadow: 0 18px 60px #0008; }
     dialog::backdrop { background: #0009; backdrop-filter: blur(2px); }
@@ -366,6 +371,11 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     <img id="detailImage" alt="">
     <h2 id="detailTitle"></h2>
     <dl id="detailData"></dl>
+    <div class="identity-hint">
+      <button id="showIdentityHint" type="button">Suggest identity</button>
+      <textarea id="galleryIdentityHint" hidden placeholder="Suggested template identity or context…"></textarea>
+      <button id="reanalyzeIdentity" type="button" hidden>Re-analyze</button>
+    </div>
     <div class="dialog-actions">
       <button type="button" id="closeMemeDetail">Close</button>
       <button type="button" id="replaceMeme" class="neutral" hidden>Replace existing</button>
@@ -663,6 +673,18 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     });
   }
   document.querySelector("#closeMemeDetail").addEventListener("click", () => memeDetail.close());
+  const galleryIdentityHint = document.querySelector("#galleryIdentityHint");
+  const reanalyzeIdentity = document.querySelector("#reanalyzeIdentity");
+  document.querySelector("#showIdentityHint").addEventListener("click", () => {
+    galleryIdentityHint.hidden = false;
+    reanalyzeIdentity.hidden = false;
+    galleryIdentityHint.focus();
+  });
+  reanalyzeIdentity.addEventListener("click", () => {
+    const hint = galleryIdentityHint.value.trim();
+    if (!selectedMeme || !hint) return;
+    run(() => post("/api/meme/analyze", { id: selectedMeme.id, hint }));
+  });
   deleteMemeButton.addEventListener("click", () =>
     selectedMeme && run(() => post("/api/meme/delete", { id: selectedMeme.id })));
   replaceMemeButton.addEventListener("click", () => {
@@ -897,11 +919,6 @@ async function startPreviewServer(_instanceId, image, caption = "") {
                 response.end("Invalid rating.");
                 return;
             }
-            if (url.pathname === "/analyze" && request.method === "POST") {
-                const body = await readBody(request);
-                sendJson(response, await analyzeMeme(image.id, body.hint || ""));
-                return;
-            }
             const index = await loadMemeIndex();
             const current = index.images.find((candidate) => candidate.id === image.id);
             if (current) {
@@ -946,20 +963,12 @@ async function startPreviewServer(_instanceId, image, caption = "") {
     color:#111827; background:#fff; font:700 14px var(--font-sans,Segoe UI,sans-serif); cursor:pointer; }
   #hit, #miss { background:#fff; border-color:#d1d5db; }
   .feedback button.selected { outline:3px solid #8b5cf6; outline-offset:1px; }
-  .identity-hint { display:grid; gap:8px; margin-top:12px; }
-  .identity-hint textarea { min-height:64px; resize:vertical; border:1px solid #cbd5e1; border-radius:5px;
-    padding:9px 10px; font:14px var(--font-sans,Segoe UI,sans-serif); }
-  .identity-hint button { min-height:38px; border:1px solid #cbd5e1; border-radius:5px; background:#fff; color:#111827; font-weight:700; }
 </style></head><body>
 <main>
   <canvas id="preview" aria-label="${escapeHtml(image.template || "Meme editor")}"></canvas>
   <div class="feedback">
     <button id="miss" aria-label="Meh">👎</button>
     <button id="hit" aria-label="Hit">👍</button>
-  </div>
-  <div class="identity-hint">
-    <textarea id="identityHint" placeholder="Suggest template identity or context…"></textarea>
-    <button id="suggestIdentity">Suggest identity and re-analyze</button>
   </div>
 </main>
 <script>
@@ -1028,19 +1037,6 @@ async function rate(value) {
 }
 document.querySelector("#hit").addEventListener("click", () => rate("hit"));
 document.querySelector("#miss").addEventListener("click", () => rate("miss"));
-document.querySelector("#suggestIdentity").addEventListener("click", async () => {
-  const hint = document.querySelector("#identityHint").value.trim();
-  if (!hint) return;
-  const response = await fetch("/analyze", {
-    method:"POST",
-    headers: {"content-type":"application/json"},
-    body: JSON.stringify({ hint })
-  });
-  if (response.ok) {
-    document.querySelector("#suggestIdentity").textContent = "Re-analyzing…";
-    setTimeout(() => location.reload(), 1200);
-  }
-});
 canvas.addEventListener("click", () => {
   document.body.innerHTML = "";
   document.body.className = "idle";
