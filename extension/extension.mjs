@@ -302,10 +302,10 @@ function renderHtml(profile, profiles, activeName) {
     .profile-card { padding: 12px 14px; }
     .profile-label { display: block; margin-bottom: 5px; color: var(--lp-muted); font-size: 11px;
       font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-    .profile-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
-    .profile-row button, .profile-row .export { min-width: 42px; padding: 8px 10px; }
+    .profile-row { display: grid; grid-template-columns: minmax(0, 1fr) 90px; gap: 7px; }
+    .profile-row button, .profile-row .export { padding: 8px 10px; }
     .profile-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
-    .transfer-actions { display: grid; grid-template-columns: 1fr 1fr; flex: 1; gap: 8px; }
+    .transfer-actions { display: grid; grid-template-columns: 104px 104px; gap: 8px; }
     select, input { width: 100%; padding: 8px 10px; }
     .stats { display: flex; flex-wrap: wrap; gap: 18px; color: var(--lp-muted); }
     .stats strong { color: inherit; }
@@ -320,7 +320,7 @@ function renderHtml(profile, profiles, activeName) {
       filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff);
     }
     #importFile { display: none; }
-    #delete { color: #fff; border-color: #be123c; background: #be123c; }
+    #delete { width: 90px; color: #fff; border-color: #be123c; background: #be123c; }
     dialog { width: min(420px, calc(100vw - 32px)); border: 1px solid var(--lp-border); border-radius: 7px;
       color: inherit; background: var(--lp-card); box-shadow: 0 18px 60px #0008; }
     dialog::backdrop { background: #0009; backdrop-filter: blur(2px); }
