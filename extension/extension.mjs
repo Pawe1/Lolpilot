@@ -452,12 +452,19 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   const sortMemes = document.querySelector("#sortMemes");
   let newestFirst = true;
   let memeSignature = "";
+  let pendingMemeRefresh = false;
   async function refreshMemeStatus() {
     try {
       const response = await fetch("/api/memes/status", { cache: "no-store" });
       if (!response.ok) return;
       const state = await response.json();
       if (memeSignature && state.signature !== memeSignature) {
+        if (document.querySelector("#memeDetail")?.open) {
+          pendingMemeRefresh = true;
+          document.querySelector("#memeStatus").textContent = "Analysis updated. Refresh will run after this preview closes.";
+          memeSignature = state.signature;
+          return;
+        }
         const params = new URLSearchParams();
         params.set("view", "library");
         if (statusFilter.value !== "all") params.set("status", statusFilter.value);
@@ -642,6 +649,12 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   const deleteMemeButton = document.querySelector("#deleteMeme");
   const replaceMemeButton = document.querySelector("#replaceMeme");
   let selectedMeme;
+  memeDetail.addEventListener("close", () => {
+    if (pendingMemeRefresh) {
+      pendingMemeRefresh = false;
+      location.assign("?view=library");
+    }
+  });
   memeDetail.addEventListener("click", (event) => {
     if (event.target === memeDetail) memeDetail.close();
   });
