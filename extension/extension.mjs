@@ -794,7 +794,7 @@ function profileContext(profile) {
     return [
         "Lolpilot profile:",
         "This is user-facing chat. Respond normally in the user's language; never return a meme metadata JSON object.",
-        `humor level ${profile.level}/3`,
+        `humor level ${profile.level}/4`,
         `image preference: ${profile.images}`,
         `censor-safe mode: ${profile.censorSafe ? "on" : "off"}`,
         `last reaction: ${profile.lastReaction}`,
@@ -861,7 +861,11 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       background: var(--lp-card); box-shadow: 0 5px 18px #00000014; }
     .eyebrow { color: #8b5cf6; font-size: 11px; font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
     .level { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 8px; }
-    .level-name { min-width: 74px; font-size: 21px; font-weight: 750; text-transform: capitalize; }
+    .level-name { width: 142px; min-width: 142px; font-size: 21px; font-weight: 750; text-transform: capitalize; }
+    .level-value { width: 36px; min-width: 36px; text-align: right; }
+    .level.max-humor { margin: -15px; padding: 15px; border-radius: 6px; color: #f8fafc; background: #050505; }
+    .level.max-humor .meter { opacity: .96; }
+    .level.max-humor .bar { border-color: #3f3f46; }
     .meter { flex: 1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
     .bar { height: 10px; border: 1px solid var(--lp-border); border-radius: 3px; background: var(--lp-control); }
     .bar.on { border-color: transparent; background: linear-gradient(90deg, #f97316, #ec4899); }
@@ -986,6 +990,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       .buttons button { width: 100%; min-width: 0; white-space: normal; }
       button, select, input, a.export, .import { min-width: 0; }
       .level { align-items: flex-start; flex-direction: column; gap: 8px; }
+      .level-name { width: 100%; min-width: 0; }
+      .level-value { width: auto; min-width: 0; }
       .meter { width: 100%; }
       .add-menu { grid-template-columns: 1fr; }
       .meme-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1027,12 +1033,12 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   <div class="control-page">
   <section class="card">
     <div class="eyebrow">Humor engine</div>
-    <div class="level">
+    <div class="level ${profile.level === 4 ? "max-humor" : ""}">
       <div class="level-name">${escapeHtml(levels[profile.level])}</div>
       <div class="meter">${levels.slice(1).map((_, index) =>
         `<div class="bar ${index < profile.level ? (index === 3 ? "dark-on" : "on") : ""}"></div>`
       ).join("")}</div>
-      <strong>${profile.level}/4</strong>
+      <strong class="level-value">${profile.level}/4</strong>
     </div>
     <div class="buttons">
       <button class="cool" data-reaction="humor-">🧊 Dial it down</button>
