@@ -794,7 +794,7 @@ function profileContext(profile) {
         "Use subtle, mostly situational humor.",
         "Use clear, playful, safe humor.",
         "Use abstract, absurd, sharp, cutting humor in ordinary conversation and technical answers. Deliver at least one strong punchline when the topic allows it; remain contextual, not offensive.",
-        "Use sharp internet-forum banter: fast punchlines, dark deadpan, absurdity, callbacks, and roasting the situation or bad ideas. Avoid corporate-safe phrasing and TED-talk moralizing. Never target protected groups, real victims, the user, or current real-world tragedies.",
+        "Start with a sharp punchline or cutting one-liner before any explanation. Use fast internet-forum banter, dark deadpan, absurdity, callbacks, and roast the situation or bad ideas. Avoid corporate-safe phrasing and TED-talk moralizing. A dry bureaucratic answer at this level is a style failure. Never target protected groups, real victims, the user, or current real-world tragedies.",
     ][profile.level];
     return [
         "Lolpilot profile:",
@@ -804,7 +804,7 @@ function profileContext(profile) {
         `censor-safe mode: ${profile.censorSafe ? "on" : "off"}`,
         `last reaction: ${profile.lastReaction}`,
         humorDirection,
-        "Be concise and technically precise. Never let humor obscure findings, risks, safety, or commits.",
+        "Be concise and technically precise after the punchline. Never let humor obscure findings, risks, safety, or commits.",
         profile.censorSafe
             ? "Keep profanity, sexual references, slurs, and graphic language out of humor."
             : "Censor-safe mode is off; do not force profanity or spicy language. Choose whatever tone fits the joke, while still avoiding slurs and harassment.",
