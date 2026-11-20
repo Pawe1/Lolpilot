@@ -34,6 +34,7 @@ const defaultProfile = {
     level: 2,
     images: "rare",
     censorSafe: true,
+    emoji: "never",
     lastReaction: "none",
     hits: 0,
     misses: 0,
@@ -591,6 +592,7 @@ function parseProfile(text) {
         level: Math.max(0, Math.min(4, Number.parseInt(value("Level", "2/4"), 10))),
         images: value("Images", "rare"),
         censorSafe: value("Censor-safe", "true").toLowerCase() !== "false",
+        emoji: value("Emoji", "never"),
         lastReaction: value("Last reaction", "none"),
         hits: number("Hits", 0),
         misses: number("Misses", 0),
@@ -605,6 +607,7 @@ function profileMarkdown(profile) {
 - Level: ${profile.level}/4
 - Images: ${profile.images}
 - Censor-safe: ${profile.censorSafe}
+- Emoji: ${profile.emoji}
 - Last reaction: ${profile.lastReaction}
 - Hits: ${profile.hits}
 - Misses: ${profile.misses}
@@ -619,6 +622,7 @@ function normalizeProfile(profile) {
         level: Math.max(0, Math.min(4, Number(profile.level ?? defaultProfile.level))),
         images: ["rare", "often", "never"].includes(profile.images) ? profile.images : defaultProfile.images,
         censorSafe: profile.censorSafe !== false,
+        emoji: profile.emoji === "allowed" ? "allowed" : "never",
         lastReaction: String(profile.lastReaction || "none"),
         hits: Math.max(0, Number(profile.hits) || 0),
         misses: Math.max(0, Number(profile.misses) || 0),
@@ -800,6 +804,7 @@ function profileContext(profile) {
         "Lolpilot profile:",
         "This is user-facing chat. Respond normally in the user's language; never return a meme metadata JSON object.",
         "Do not use emoji unless the user explicitly asks for emoji.",
+        profile.emoji === "allowed" ? "Emoji may be used only when they improve the joke." : "Keep emoji disabled.",
         `humor level ${profile.level}/4`,
         `image preference: ${profile.images}`,
         `censor-safe mode: ${profile.censorSafe ? "on" : "off"}`,
