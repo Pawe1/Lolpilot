@@ -987,6 +987,8 @@ async function startPreviewServer(_instanceId, image, caption = "") {
     color:var(--text-color-default,#f8fafc); font-family:var(--font-sans,Segoe UI,sans-serif); }
   main { width:min(100%, 720px); min-height:100vh; margin:0 auto; padding:12px;
     display:flex; flex-direction:column; justify-content:center; }
+  main.dismissing { animation: fadeDismiss 1.5s ease forwards; }
+  @keyframes fadeDismiss { to { opacity:0; transform:scale(.985); } }
   canvas { display:block; width:100%; height:auto; max-height:none; object-fit:contain; background:#000; }
   body.idle {
     background: linear-gradient(120deg, #f8fafc, #d1d5db, #f8fafc) !important;
@@ -1000,6 +1002,7 @@ async function startPreviewServer(_instanceId, image, caption = "") {
     color:#111827; background:#fff; font:700 14px var(--font-sans,Segoe UI,sans-serif); cursor:pointer; }
   #hit, #miss { background:#fff; border-color:#d1d5db; }
   .feedback button.selected { outline:3px solid #8b5cf6; outline-offset:1px; }
+  .dismiss-hint { display:block; padding:8px 0 0; color:var(--text-color-muted,#9da7b3); text-align:center; font-size:12px; }
 </style></head><body>
 <main>
   <canvas id="preview" aria-label="${escapeHtml(image.template || "Meme editor")}"></canvas>
@@ -1007,6 +1010,7 @@ async function startPreviewServer(_instanceId, image, caption = "") {
     <button id="miss" aria-label="Meh" title="Meh">😐</button>
     <button id="hit" aria-label="Hit" title="Hit">😬</button>
   </div>
+  <small class="dismiss-hint">Click image to dismiss</small>
 </main>
 <script>
 const canvas = document.querySelector("#preview");
@@ -1075,11 +1079,14 @@ async function rate(value) {
 document.querySelector("#hit").addEventListener("click", () => rate("hit"));
 document.querySelector("#miss").addEventListener("click", () => rate("miss"));
 canvas.addEventListener("click", () => {
-  document.body.innerHTML = "";
-  document.body.className = "idle";
-  document.body.style.setProperty("background", "linear-gradient(120deg, #f8fafc, #d1d5db, #f8fafc)", "important");
-  document.body.style.setProperty("background-size", "220% 220%", "important");
-  document.body.style.setProperty("animation", "idleWave 7s ease-in-out infinite", "important");
+  document.querySelector("main").classList.add("dismissing");
+  setTimeout(() => {
+    document.body.innerHTML = "";
+    document.body.className = "idle";
+    document.body.style.setProperty("background", "linear-gradient(120deg, #f8fafc, #d1d5db, #f8fafc)", "important");
+    document.body.style.setProperty("background-size", "220% 220%", "important");
+    document.body.style.setProperty("animation", "idleWave 7s ease-in-out infinite", "important");
+  }, 1500);
 });
 </script></body></html>`);
     });
