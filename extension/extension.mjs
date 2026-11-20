@@ -374,8 +374,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     <dl id="detailData"></dl>
     <div class="identity-hint">
       <button id="showIdentityHint" type="button">Suggest identity</button>
-      <textarea id="galleryIdentityHint" hidden placeholder="Suggested template identity or context…"></textarea>
-      <button id="reanalyzeIdentity" type="button" hidden>Re-analyze</button>
+      <textarea id="galleryIdentityHint" hidden placeholder="Suggested template identity or context…" autofocus></textarea>
+      <button id="reanalyzeIdentity" type="button" hidden disabled>Send suggestion & re-analyze</button>
     </div>
     <div class="dialog-actions">
       <button type="button" id="closeMemeDetail">Close</button>
@@ -692,7 +692,11 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   document.querySelector("#showIdentityHint").addEventListener("click", () => {
     galleryIdentityHint.hidden = false;
     reanalyzeIdentity.hidden = false;
+    document.querySelector("#showIdentityHint").hidden = true;
     galleryIdentityHint.focus();
+  });
+  galleryIdentityHint.addEventListener("input", () => {
+    reanalyzeIdentity.disabled = !galleryIdentityHint.value.trim();
   });
   reanalyzeIdentity.addEventListener("click", () => {
     const hint = galleryIdentityHint.value.trim();
