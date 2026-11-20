@@ -16,6 +16,7 @@ const IMAGE_CACHE_DIR = `${ROOT}\\cache\\images`;
 const MEME_INDEX_PATH = `${ROOT}\\cache\\meme-index.json`;
 const servers = new Map();
 const execFileAsync = promisify(execFile);
+const analysisRequests = new Map();
 let BUILD_ID = "working-tree";
 try {
     const { stdout } = await execFileAsync("git", ["-C", ROOT, "rev-parse", "--short", "HEAD"]);
@@ -263,6 +264,7 @@ async function analyzeMeme(id) {
     const index = await loadMemeIndex();
     const image = index.images.find((candidate) => candidate.id === id);
     if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+    if (image.analysisStatus === "analyzing") return image;
     await updateMeme(id, { analysisStatus: "analyzing" });
     const imagePath = `${IMAGE_CACHE_DIR}\\${image.file}`;
     const schema = {
@@ -284,7 +286,7 @@ async function analyzeMeme(id) {
         ],
     };
     try {
-        const response = await session.sendAndWait({
+        const messageId = await session.send({
             prompt: [
                 "Analyze this meme template for Lolpilot.",
                 "Identify the common template name if recognizable; otherwise say \"Unknown template\".",
@@ -297,30 +299,9 @@ async function analyzeMeme(id) {
             mode: "enqueue",
             attachments: [{ type: "file", path: imagePath, displayName: image.file }],
             responseSchema: schema,
-        }, 120000);
-        const content = String(response?.data?.content || "").trim();
-        let result;
-        try {
-            result = JSON.parse(content);
-        } catch {
-            const jsonMatch = content.match(/\{[\s\S]*\}/);
-            result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-        }
-        const confidence = Number(result?.confidence);
-        if (!result || !Number.isFinite(confidence)) {
-            throw new Error("The analysis result did not contain a valid confidence value.");
-        }
-        return updateMeme(id, {
-            template: String(result.template || "Unknown template").slice(0, 120),
-            templateAliases: (result.templateAliases || []).map((value) => String(value).slice(0, 120)).slice(0, 5),
-            visualDescription: String(result.visualDescription || "").slice(0, 500),
-            emotion: String(result.emotion || "").slice(0, 80),
-            tone: (result.tone || []).map((value) => String(value).slice(0, 60)).slice(0, 5),
-            captionRules: (result.captionRules || []).map((value) => String(value).slice(0, 180)).slice(0, 8),
-            tags: normalizeTags((result.tags || []).join(",")),
-            confidence,
-            analysisStatus: confidence < 0.55 ? "needs-review" : "analyzed",
         });
+        analysisRequests.set(messageId, id);
+        return { ...image, analysisStatus: "analyzing", messageId };
     } catch (error) {
         await updateMeme(id, {
             analysisStatus: "needs-review",
@@ -328,6 +309,36 @@ async function analyzeMeme(id) {
         });
         throw error;
     }
+}
+
+function parseAnalysisContent(content) {
+    const text = String(content || "").trim();
+    try {
+        return JSON.parse(text);
+    } catch {
+        const match = text.match(/\{[\s\S]*\}/);
+        return match ? JSON.parse(match[0]) : null;
+    }
+}
+
+async function storeMemeAnalysis(id, content) {
+    const result = parseAnalysisContent(content);
+    const confidence = Number(result?.confidence);
+    if (!result || !Number.isFinite(confidence)) {
+        throw new Error("The analysis result did not contain a valid confidence value.");
+    }
+    return updateMeme(id, {
+        template: String(result.template || "Unknown template").slice(0, 120),
+        templateAliases: (result.templateAliases || []).map((value) => String(value).slice(0, 120)).slice(0, 5),
+        visualDescription: String(result.visualDescription || "").slice(0, 500),
+        emotion: String(result.emotion || "").slice(0, 80),
+        tone: (result.tone || []).map((value) => String(value).slice(0, 60)).slice(0, 5),
+        captionRules: (result.captionRules || []).map((value) => String(value).slice(0, 180)).slice(0, 8),
+        tags: normalizeTags((result.tags || []).join(",")),
+        confidence,
+        analysisStatus: confidence < 0.55 ? "needs-review" : "analyzed",
+        analysisError: "",
+    });
 }
 
 async function analyzePendingMemes() {
@@ -1176,4 +1187,23 @@ const session = await joinSession({
             return { additionalContext: context.join(" ") };
         },
     },
+});
+
+session.on("assistant.message", async (event) => {
+    const messageId = event.data.originatingMessageId;
+    if (!messageId) return;
+    const imageId = analysisRequests.get(messageId);
+    if (!imageId) return;
+    try {
+        await storeMemeAnalysis(imageId, event.data.content);
+        analysisRequests.delete(messageId);
+        await session.log(`Lolpilot analyzed meme ${imageId}.`, { ephemeral: true });
+    } catch (error) {
+        if (event.data.toolRequests?.length) return;
+        await updateMeme(imageId, {
+            analysisStatus: "needs-review",
+            analysisError: String(error?.message || error).slice(0, 240),
+        });
+        analysisRequests.delete(messageId);
+    }
 });
