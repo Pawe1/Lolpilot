@@ -303,15 +303,17 @@ function renderHtml(profile, profiles, activeName) {
       <div class="meter">${levels.map((_, index) => `<div class="bar ${index <= profile.level ? "on" : ""}"></div>`).join("")}</div>
       <strong>${profile.level}/3</strong>
     </div>
+    <div class="buttons">
+      <button class="cool" data-reaction="humor-">🧊 Dial it down</button>
+      <button class="hot" data-reaction="humor+">🔥 More chaos</button>
+      <button class="neutral wide" data-reaction="humor-stop">🧑‍💼 Full serious mode</button>
+    </div>
   </section>
   <section class="card">
     <div class="eyebrow">React to the last answer</div>
     <div class="buttons">
       <button class="good" data-reaction="trafione">😂 Trafione</button>
       <button class="bad" data-reaction="meh">😐 Meh</button>
-      <button class="hot" data-reaction="humor+">🔥 More chaos</button>
-      <button class="cool" data-reaction="humor-">🧊 Dial it down</button>
-      <button class="neutral wide" data-reaction="humor-stop">🧑‍💼 Full serious mode</button>
     </div>
   </section>
   <section class="card">
