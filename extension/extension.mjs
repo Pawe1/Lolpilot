@@ -496,6 +496,17 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   }
   statusFilter.addEventListener("change", filterLibrary);
   memeSearch.addEventListener("input", filterLibrary);
+  function persistLibraryFilters() {
+    const params = new URLSearchParams(location.search);
+    params.set("view", "library");
+    if (statusFilter.value === "all") params.delete("status");
+    else params.set("status", statusFilter.value);
+    if (memeSearch.value) params.set("q", memeSearch.value);
+    else params.delete("q");
+    history.replaceState(null, "", "?" + params.toString());
+  }
+  statusFilter.addEventListener("change", persistLibraryFilters);
+  memeSearch.addEventListener("input", persistLibraryFilters);
   function sortMemeCards() {
     sortMemes.textContent = newestFirst ? "▼ Newest" : "▲ Oldest";
     const grid = document.querySelector(".meme-grid");
@@ -652,7 +663,9 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   memeDetail.addEventListener("close", () => {
     if (pendingMemeRefresh) {
       pendingMemeRefresh = false;
-      location.assign("?view=library");
+      const params = new URLSearchParams(location.search);
+      params.set("view", "library");
+      location.assign("?" + params.toString());
     }
   });
   memeDetail.addEventListener("click", (event) => {
