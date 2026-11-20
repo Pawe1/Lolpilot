@@ -1078,7 +1078,7 @@ async function startServer() {
     return { server, url: `http://127.0.0.1:${port}/` };
 }
 
-await joinSession({
+const session = await joinSession({
     canvases: [
         createCanvas({
             id: "lolpilot-reactions",
