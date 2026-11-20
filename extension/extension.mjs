@@ -18,8 +18,8 @@ const defaultProfile = {
 };
 
 function normalizeName(name) {
-    const normalized = String(name || "").trim().toLowerCase().replace(/\s+/g, "-");
-    if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(normalized)) {
+    const normalized = String(name || "").trim().replace(/\s+/g, "-");
+    if (!/^[a-z0-9][a-z0-9_-]{0,31}$/i.test(normalized)) {
         throw new CanvasError("invalid_profile_name", "Use 1-32 letters, digits, hyphens, or underscores.");
     }
     return normalized;
@@ -129,7 +129,7 @@ async function saveActiveProfile(profile) {
 async function createProfile(name, profile = defaultProfile) {
     const normalizedName = normalizeName(name);
     const names = await listProfiles();
-    if (names.includes(normalizedName)) {
+    if (names.some((candidate) => candidate.toLocaleLowerCase() === normalizedName.toLocaleLowerCase())) {
         throw new CanvasError("profile_exists", `Profile "${normalizedName}" already exists.`);
     }
     const text = profileMarkdown(normalizeProfile(profile));
@@ -161,10 +161,13 @@ function validateImportedProfile(payload) {
 async function importProfile(payload, overwrite = false) {
     const imported = validateImportedProfile(payload);
     const names = await listProfiles();
-    if (names.includes(imported.name) && !overwrite) {
+    const existingName = names.find((candidate) =>
+        candidate.toLocaleLowerCase() === imported.name.toLocaleLowerCase()
+    );
+    if (existingName && !overwrite) {
         throw new CanvasError("profile_exists", `Profile "${imported.name}" already exists.`);
     }
-    return persistActive(imported.name, imported.profile);
+    return persistActive(existingName || imported.name, imported.profile);
 }
 
 async function switchProfile(name) {
