@@ -302,14 +302,15 @@ function renderHtml(profile, profiles, activeName) {
     .profile-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
     .profile-row button, .profile-row .export { min-width: 42px; padding: 8px 10px; }
     .profile-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
-    .transfer-actions { display: flex; align-items: center; gap: 8px; }
+    .transfer-actions { display: grid; grid-template-columns: 1fr 1fr; flex: 1; gap: 8px; }
     select, input { width: 100%; padding: 8px 10px; }
     .stats { display: flex; flex-wrap: wrap; gap: 18px; color: var(--lp-muted); }
     .stats strong { color: inherit; }
     .status { min-height: 20px; margin-top: 10px; color: #8b5cf6; text-align: center; font-weight: 650; }
     .fine { color: var(--lp-muted); font-size: 12px; }
-    a.export, .import { display: inline-grid; place-items: center; min-height: 42px; padding: 8px 12px; border: 1px solid var(--lp-border);
-      border-radius: 5px; color: inherit; background: var(--lp-control); font-weight: 700; text-decoration: none; }
+    a.export, .import { display: inline-grid; grid-auto-flow: column; align-items: center; justify-content: center; gap: 6px;
+      width: 100%; min-height: 42px; padding: 8px 12px; border: 1px solid var(--lp-border); border-radius: 5px;
+      color: inherit; background: var(--lp-control); font-weight: 700; text-decoration: none; }
     .arrow { color: #000; font-size: 20px; font-weight: 900; line-height: 1; }
     body[data-color-mode="dark"] .arrow, html[data-dark-theme] .arrow, :root:not([data-light-theme]) .arrow {
       color: #000;
