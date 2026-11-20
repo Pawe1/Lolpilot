@@ -789,7 +789,7 @@ function profileContext(profile) {
         "Use subtle, mostly situational humor.",
         "Use clear, playful, safe humor.",
         "Use abstract, absurd, sharp, cutting humor in ordinary conversation and technical answers. Deliver at least one strong punchline when the topic allows it; remain contextual, not offensive.",
-        "Use black, cynical, grotesque humor with an edgy edge in ordinary conversation and technical answers. Make the tone visibly darker and more uncomfortable, but never target protected groups, real victims, the user, or current real-world tragedies.",
+        "Use sharp internet-forum banter: fast punchlines, dark deadpan, absurdity, callbacks, and roasting the situation or bad ideas. Avoid corporate-safe phrasing and TED-talk moralizing. Never target protected groups, real victims, the user, or current real-world tragedies.",
     ][profile.level];
     return [
         "Lolpilot profile:",
