@@ -944,7 +944,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .add-menu.open { display: grid; }
     #memeFile { display: none; }
     .library-card { margin-top: 20px; }
-    .library-page > .library-card { margin: 0 0 18px; }
+    .library-page > .library-card { margin: 0 0 16px; }
     .library-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
     .library-summary button { min-width: 150px; }
     .library-page { display: none; }
@@ -952,11 +952,11 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     body.library-open > main > .brand, body.library-open > main > .profile-card { display: none; }
     body.library-open .control-page { display: none; }
     body.library-open .library-page { display: block; }
-    body.library-open .library-page > .card { margin: 0; }
+    body.library-open .library-page > .card { margin: 0 0 16px; }
     .library-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
     .library-header h2 { margin: 0; flex: 1; }
-    .library-filters { display: grid; grid-template-columns: auto 170px minmax(160px, 1fr) 76px; align-items: center;
-      gap: 8px; margin-bottom: 10px; }
+    .library-filters { display: grid; grid-template-columns: auto 170px minmax(140px, 1fr) 76px; align-items: center;
+      gap: 8px; margin: 16px 0 10px; padding-top: 14px; border-top: 1px solid var(--lp-border); }
     .library-filters select { width: auto; min-width: 170px; }
     .filter-count { display: grid; place-items: center; min-width: 68px; line-height: 1.05; text-align: center; }
     .filter-count strong { font-size: 15px; }
@@ -991,6 +991,13 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       .meme-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .library-filters { grid-template-columns: 1fr; }
       .library-filters select { width: 100%; }
+    }
+    @media (min-width: 341px) and (max-width: 620px) {
+      .library-filters { grid-template-columns: auto minmax(0, 1fr) 72px; }
+      .library-filters label { grid-column: 1; }
+      .library-filters select { grid-column: 2 / 4; min-width: 0; width: 100%; }
+      .library-filters input { grid-column: 1 / 3; min-width: 0; }
+      .library-filters .filter-count { grid-column: 3; }
     }
   </style>
 </head>
