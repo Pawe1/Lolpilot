@@ -1,5 +1,7 @@
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { joinSession, createCanvas, CanvasError } from "@github/copilot-sdk/extension";
 
@@ -82,10 +84,85 @@ async function addMeme({ fileName, mimeType, dataUrl, tags, clue, source = "loca
         source: String(source || "local-import").trim().slice(0, 240),
         addedAt: new Date().toISOString(),
         uses: 0,
+        analysisStatus: "pending",
     };
     index.images.push(image);
     await saveMemeIndex(index);
     return image;
+}
+
+function isPrivateAddress(address) {
+    if (address === "::1" || address === "::") return true;
+    if (address.includes(":")) {
+        const normalized = address.toLowerCase();
+        return normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe8")
+            || normalized.startsWith("fe9") || normalized.startsWith("fea") || normalized.startsWith("feb");
+    }
+    const [a, b] = address.split(".").map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224
+        || (a === 169 && b === 254)
+        || (a === 172 && b >= 16 && b <= 31)
+        || (a === 192 && (b === 168 || b === 0));
+}
+
+async function validateImageUrl(url) {
+    const parsed = new URL(String(url || ""));
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+        throw new CanvasError("invalid_image_url", "Use an http or https image URL.");
+    }
+    if (parsed.username || parsed.password || parsed.hostname === "localhost" || parsed.hostname.endsWith(".local")) {
+        throw new CanvasError("invalid_image_url", "Local or credentialed URLs are not allowed.");
+    }
+    const records = isIP(parsed.hostname)
+        ? [{ address: parsed.hostname }]
+        : await lookup(parsed.hostname, { all: true });
+    if (!records.length || records.some(({ address }) => isPrivateAddress(address))) {
+        throw new CanvasError("invalid_image_url", "Private network image URLs are not allowed.");
+    }
+    return parsed;
+}
+
+async function fetchImageUrl(url) {
+    let current = await validateImageUrl(url);
+    for (let redirects = 0; redirects <= 3; redirects += 1) {
+        const response = await fetch(current, {
+        redirect: "manual",
+        headers: { accept: "image/png,image/jpeg,image/gif,image/webp" },
+        signal: AbortSignal.timeout(15000),
+        });
+        if (response.status >= 300 && response.status < 400) {
+            const location = response.headers.get("location");
+            if (!location) throw new CanvasError("image_url_failed", "Image redirect is missing a destination.");
+            current = await validateImageUrl(new URL(location, current).href);
+            continue;
+        }
+        return { response, parsed: current };
+    }
+    throw new CanvasError("image_url_failed", "Image URL redirected too many times.");
+}
+
+async function addMemeFromUrl(url) {
+    const { response, parsed } = await fetchImageUrl(url);
+    if (!response.ok) throw new CanvasError("image_url_failed", `Image URL returned HTTP ${response.status}.`);
+    const mimeType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+    if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mimeType)) {
+        throw new CanvasError("invalid_image_type", "The URL does not point to PNG, JPEG, GIF, or WebP.");
+    }
+    const length = Number(response.headers.get("content-length") || 0);
+    if (length > 8 * 1024 * 1024) {
+        throw new CanvasError("invalid_image_size", "Image size must not exceed 8 MiB.");
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (!bytes.length || bytes.length > 8 * 1024 * 1024) {
+        throw new CanvasError("invalid_image_size", "Image size must be between 1 byte and 8 MiB.");
+    }
+    const fileName = decodeURIComponent(parsed.pathname.split("/").pop() || "meme");
+    return addMeme({
+        fileName,
+        mimeType,
+        dataUrl: `data:${mimeType};base64,${bytes.toString("base64")}`,
+        source: parsed.href,
+    });
 }
 
 function findMemes(index, query) {
@@ -349,8 +426,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <article class="meme-card">
         <img src="/api/meme/image?id=${encodeURIComponent(image.id)}" alt="${escapeHtml(image.clue || image.file)}">
         <div class="meme-copy">
-          <strong>${escapeHtml(image.clue || "Untitled clue")}</strong>
-          <small>${image.tags.map((tag) => `#${escapeHtml(tag)}`).join(" ") || "No tags yet"}</small>
+          <strong>${escapeHtml(image.template || image.clue || "Awaiting analysis")}</strong>
+          <small>${escapeHtml(image.analysisStatus === "pending" ? "Queued for agent analysis" : (image.tags || []).join(" · ") || "No tags yet")}</small>
         </div>
         <button class="meme-delete" data-meme-delete="${escapeHtml(image.id)}" title="Delete meme">❌</button>
       </article>
@@ -437,9 +514,13 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .meme-copy strong, .meme-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .meme-copy small { margin-top: 3px; color: var(--lp-muted); }
     .meme-delete { min-height: 36px; padding: 7px 9px; color: #fff; border-color: #be123c; background: #be123c; }
-    .meme-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 11px; }
-    .meme-fields { display: grid; gap: 7px; }
+    .meme-actions { position: relative; margin-top: 11px; }
+    #addMeme { width: 100%; border-style: dashed; }
+    #addMeme.dragging { outline: 3px solid #22c55e; outline-offset: 2px; filter: brightness(1.14); }
+    .add-menu { display: none; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+    .add-menu.open { display: grid; }
     #memeFile { display: none; }
+    .library-card { margin-top: 20px; }
     dialog { width: min(420px, calc(100vw - 32px)); border: 1px solid var(--lp-border); border-radius: 7px;
       color: inherit; background: var(--lp-card); box-shadow: 0 18px 60px #0008; }
     dialog::backdrop { background: #0009; backdrop-filter: blur(2px); }
@@ -461,7 +542,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       button, select, input, a.export, .import { min-width: 0; }
       .level { align-items: flex-start; flex-direction: column; gap: 8px; }
       .meter { width: 100%; }
-      .meme-form { grid-template-columns: minmax(0, 1fr); }
+      .add-menu { grid-template-columns: 1fr; }
       .meme-card { grid-template-columns: 54px minmax(0, 1fr) auto; }
       .meme-card img { width: 54px; height: 44px; }
     }
@@ -517,16 +598,21 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <button class="${profile.images === "rare" ? "selected" : ""}" data-reaction="images-rare">✨ Rare</button>
       <button class="wide ${profile.images === "never" ? "selected" : ""}" data-reaction="images-off">🚫 No images</button>
     </div>
-    <div class="meme-form">
-      <div class="meme-fields">
-        <input id="memeClue" maxlength="240" placeholder="Clue: when CI is waiting forever">
-        <input id="memeTags" maxlength="300" placeholder="Tags: ci, waiting, frustration">
+  </section>
+  <section class="card library-card">
+    <div class="eyebrow">Meme library</div>
+    <p class="fine">Drop an image on Add, or choose one source. The agent will analyze it after import.</p>
+    <div class="meme-actions">
+      <button id="addMeme" class="neutral">＋ Add image ▾</button>
+      <div class="add-menu" id="addMenu">
+        <button id="addFile">From file</button>
+        <button id="addUrl">From URL</button>
+        <button id="addClipboard">From clipboard</button>
       </div>
-      <button id="addMeme" class="neutral">＋ Add image</button>
       <input id="memeFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
     </div>
     <div class="meme-grid">
-      ${memeCards || '<p class="fine">No local memes yet. Add one with a clue and tags.</p>'}
+      ${memeCards || '<p class="fine">No local memes yet.</p>'}
     </div>
   </section>
   <section class="card stats">
@@ -585,10 +671,34 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     run(() => post("/api/profile/switch", { name: event.target.value })));
 
   const memeFile = document.querySelector("#memeFile");
-  document.querySelector("#addMeme").addEventListener("click", () => memeFile.click());
-  memeFile.addEventListener("change", async () => {
-    if (!memeFile.files.length) return;
-    const file = memeFile.files[0];
+  const addButton = document.querySelector("#addMeme");
+  const addMenu = document.querySelector("#addMenu");
+  addButton.addEventListener("click", () => addMenu.classList.toggle("open"));
+  document.querySelector("#addFile").addEventListener("click", () => memeFile.click());
+  document.querySelector("#addUrl").addEventListener("click", async () => {
+    const url = prompt("Paste an image URL (PNG, JPEG, GIF, or WebP):");
+    if (!url) return;
+    try {
+      await post("/api/meme/import-url", { url });
+      location.reload();
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  });
+  document.querySelector("#addClipboard").addEventListener("click", async () => {
+    try {
+      const items = await navigator.clipboard.read();
+      const type = ["image/png", "image/jpeg", "image/gif", "image/webp"].find((candidate) =>
+        items.some((item) => item.types.includes(candidate)));
+      if (!type) throw new Error("Clipboard does not contain a supported image.");
+      const item = items.find((candidate) => candidate.types.includes(type));
+      const blob = await item.getType(type);
+      await importMemeFile(new File([blob], "clipboard." + type.split("/")[1], { type }));
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  });
+  async function importMemeFile(file) {
     try {
       const dataUrl = await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -599,16 +709,34 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       await post("/api/meme/import", {
         fileName: file.name,
         mimeType: file.type,
-        dataUrl,
-        clue: document.querySelector("#memeClue").value,
-        tags: document.querySelector("#memeTags").value
+        dataUrl
       });
       location.reload();
     } catch (error) {
       status.textContent = error.message;
-    } finally {
-      memeFile.value = "";
     }
+  }
+  memeFile.addEventListener("change", async () => {
+    if (memeFile.files.length) await importMemeFile(memeFile.files[0]);
+    memeFile.value = "";
+  });
+  for (const eventName of ["dragenter", "dragover"]) {
+    addButton.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      addButton.classList.add("dragging");
+    });
+  }
+  for (const eventName of ["dragleave", "drop"]) {
+    addButton.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      addButton.classList.remove("dragging");
+    });
+  }
+  addButton.addEventListener("drop", async (event) => {
+    const file = [...event.dataTransfer.files].find((candidate) =>
+      ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(candidate.type));
+    if (file) await importMemeFile(file);
+    else status.textContent = "Drop a PNG, JPEG, GIF, or WebP image.";
   });
   for (const button of document.querySelectorAll("[data-meme-delete]")) {
     button.addEventListener("click", () =>
@@ -737,6 +865,11 @@ async function startServer() {
             }
             if (request.method === "POST" && url.pathname === "/api/meme/import") {
                 sendJson(response, await addMeme(await readBody(request)));
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/api/meme/import-url") {
+                const body = await readBody(request);
+                sendJson(response, await addMemeFromUrl(body.url));
                 return;
             }
             if (request.method === "POST" && url.pathname === "/api/meme/delete") {
