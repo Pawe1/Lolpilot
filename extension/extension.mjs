@@ -318,26 +318,28 @@ async function syncAnalysisResults() {
     let changed = 0;
     for (const name of await readdir(ANALYSIS_DIR)) {
         if (!name.endsWith(".json")) continue;
-        const path = `${ANALYSIS_DIR}\\${name}`;
-        try {
-            const result = JSON.parse(await readFile(path, "utf8"));
-            if (!result.id) throw new Error("Analysis result is missing id.");
-            await storeMemeAnalysis(result.id, JSON.stringify(result));
-            await unlink(path);
-            changed += 1;
-        } catch (error) {
-            const id = name.slice(0, -5);
-            try {
-                await updateMeme(id, {
-                    analysisStatus: "needs-review",
-                    analysisError: String(error?.message || error).slice(0, 240),
-                });
-            } catch {
-                await unlink(path).catch(() => {});
-            }
-        }
+        if (await syncAnalysisResult(name.slice(0, -5))) changed += 1;
     }
     return changed;
+}
+
+async function syncAnalysisResult(id) {
+    const path = `${ANALYSIS_DIR}\\${id}.json`;
+    try {
+        const raw = await readFile(path, "utf8");
+        const result = JSON.parse(raw.replace(/^\uFEFF/, ""));
+        if (result.id !== id) throw new Error("Analysis result id does not match the queued meme.");
+        await storeMemeAnalysis(id, JSON.stringify(result));
+        await unlink(path);
+        return true;
+    } catch (error) {
+        if (error?.code === "ENOENT") return false;
+        await updateMeme(id, {
+            analysisStatus: "needs-review",
+            analysisError: String(error?.message || error).slice(0, 240),
+        }).catch(() => {});
+        return false;
+    }
 }
 
 function curatorPrompt(image) {
@@ -411,8 +413,8 @@ async function analyzeMeme(id) {
             analysisWorkers.delete(id);
             const output = `${stdout || ""}\n${stderr || ""}`.trim().slice(0, 240);
             try {
-                const changed = await syncAnalysisResults();
-                if (!changed) {
+                const consumed = await syncAnalysisResult(id);
+                if (!consumed) {
                     await updateMeme(id, {
                         analysisStatus: "needs-review",
                         analysisError: error?.message || output || "Curator finished without writing an analysis file.",
@@ -468,6 +470,7 @@ async function storeMemeAnalysis(id, content) {
     const sameTemplate = index.images.find((image) =>
         image.id !== analyzed.id
         && image.template
+        && analyzed.template.toLocaleLowerCase() !== "unknown template"
         && image.template.toLocaleLowerCase() === analyzed.template.toLocaleLowerCase()
     );
     if (sameTemplate) {
