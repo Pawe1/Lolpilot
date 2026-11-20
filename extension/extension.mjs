@@ -365,7 +365,7 @@ function findCopilotCli() {
         const versions = readdirSync(packageRoot, { withFileTypes: true })
             .filter((entry) => entry.isDirectory())
             .map((entry) => entry.name)
-            .sort()
+            .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
             .reverse();
         for (const version of versions) {
             const entry = join(packageRoot, version, "cli-main.js");
@@ -395,13 +395,13 @@ async function analyzeMeme(id) {
         if (analysisWorkers.has(id)) return { ...image, analysisStatus: "analyzing" };
         const child = execFile("node", [
             cli,
-            "--prompt", curatorPrompt(image),
+            `--prompt=${curatorPrompt(image)}`,
             "--silent",
             "--allow-all-tools",
             "--trust-folder",
-            "--model", "auto",
-            "--reasoning-effort", "low",
-            "--name", `Lolpilot Meme Curator ${id}`,
+            "--model=auto",
+            "--reasoning-effort=low",
+            `--name=Lolpilot-Meme-Curator-${id}`,
             "--disable-client-telemetry",
         ], {
             cwd: ROOT,
