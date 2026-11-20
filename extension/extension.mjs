@@ -1004,8 +1004,8 @@ async function startPreviewServer(_instanceId, image, caption = "") {
 <main>
   <canvas id="preview" aria-label="${escapeHtml(image.template || "Meme editor")}"></canvas>
   <div class="feedback">
-    <button id="miss" aria-label="Meh">👎</button>
-    <button id="hit" aria-label="Hit">👍</button>
+    <button id="miss" aria-label="Meh" title="Meh">😐</button>
+    <button id="hit" aria-label="Hit" title="Hit">😬</button>
   </div>
 </main>
 <script>
