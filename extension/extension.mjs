@@ -933,6 +933,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .add-menu.open { display: grid; }
     #memeFile { display: none; }
     .library-card { margin-top: 20px; }
+    .library-page > .library-card { margin: 0 0 18px; }
     .library-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
     .library-summary button { min-width: 150px; }
     .library-page { display: none; }
@@ -946,7 +947,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .library-filters { display: grid; grid-template-columns: auto 170px minmax(160px, 1fr) 76px; align-items: center;
       gap: 8px; margin-bottom: 10px; }
     .library-filters select { width: auto; min-width: 170px; }
-    .filter-count { display: grid; place-items: center; line-height: 1.05; text-align: center; }
+    .filter-count { display: grid; place-items: center; min-width: 68px; line-height: 1.05; text-align: center; }
     .filter-count strong { font-size: 15px; }
     .filter-count span { color: var(--lp-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
     .meme-detail { max-width: min(620px, calc(100vw - 28px)); }
@@ -1052,7 +1053,18 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   <section class="card stats">
     <span><strong>${profile.hits}</strong> hits</span>
     <span><strong>${profile.misses}</strong> misses</span>
-    <span>Last: <strong>${escapeHtml(profile.lastReaction)}</strong></span>
+    <span>Last action: <strong>${escapeHtml({
+      "censor-safe": "enabled censor-safe mode",
+      "censor-off": "disabled censor-safe mode",
+      "humor+": "raised humor level",
+      "humor-": "lowered humor level",
+      "humor-stop": "enabled serious mode",
+      "images-on": "set images to often",
+      "images-rare": "set images to rare",
+      "images-off": "disabled images",
+      trafione: "rated as hit",
+      meh: "rated as miss",
+    }[profile.lastReaction] || profile.lastReaction)}</strong></span>
   </section>
   <div class="status" id="status"></div>
   <p class="fine">Profile data: C:\\Dev\\lolpilot · Image cache: C:\\Dev\\lolpilot\\cache\\images</p>
@@ -1083,10 +1095,10 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <label for="statusFilter">Status</label>
       <select id="statusFilter">
         <option value="all">All</option>
-        <option value="analyzed">Analyzed</option>
-        <option value="needs-review">Needs review</option>
-        <option value="analyzing">Analyzing</option>
-        <option value="pending">Pending</option>
+        <option value="analyzed">🟢 Analyzed</option>
+        <option value="needs-review">🟡 Needs review</option>
+        <option value="analyzing">🔵 Analyzing</option>
+        <option value="pending">🟠 Pending</option>
       </select>
       <input id="memeSearch" type="search" placeholder="Search template, tags, emotion…">
       <span id="filterCount" class="filter-count"></span>
@@ -1173,7 +1185,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       if (show) visible += 1;
     }
     const count = document.querySelector("#filterCount");
-    count.innerHTML = "<strong>" + visible + " of " + cards.length + "</strong><span>shown</span>";
+    count.innerHTML = "<strong>" + visible + "/" + cards.length + "</strong><span>shown</span>";
   }
   statusFilter.addEventListener("change", filterLibrary);
   memeSearch.addEventListener("input", filterLibrary);
