@@ -959,9 +959,10 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     body.library-open .library-page > .card { margin: 0 0 16px; }
     .library-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
     .library-header h2 { margin: 0; flex: 1; }
-    .library-filters { display: grid; grid-template-columns: auto 170px minmax(140px, 1fr) 76px; align-items: center;
+    .library-filters { display: grid; grid-template-columns: auto 170px minmax(140px, 1fr) auto 76px; align-items: center;
       gap: 8px; margin: 16px 0 10px; padding-top: 14px; border-top: 1px solid var(--lp-border); }
     .library-filters select { width: auto; min-width: 170px; }
+    #sortMemes { min-width: 86px; padding: 7px 9px; font-size: 12px; }
     .filter-count { display: grid; place-items: center; min-width: 68px; line-height: 1.05; text-align: center; }
     .filter-count strong { font-size: 15px; }
     .filter-count span { color: var(--lp-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
@@ -999,11 +1000,12 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       .library-filters select { width: 100%; }
     }
     @media (min-width: 341px) and (max-width: 620px) {
-      .library-filters { grid-template-columns: auto minmax(0, 1fr) 72px; }
+      .library-filters { grid-template-columns: auto minmax(0, 1fr) auto 72px; }
       .library-filters label { grid-column: 1; }
-      .library-filters select { grid-column: 2 / 4; min-width: 0; width: 100%; }
+      .library-filters select { grid-column: 2 / 5; min-width: 0; width: 100%; }
       .library-filters input { grid-column: 1 / 3; min-width: 0; }
-      .library-filters .filter-count { grid-column: 3; }
+      #sortMemes { grid-column: 3; }
+      .library-filters .filter-count { grid-column: 4; }
     }
   </style>
 </head>
@@ -1127,6 +1129,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         <option value="pending">🟠 Pending</option>
       </select>
       <input id="memeSearch" type="search" placeholder="Search template, tags, emotion…">
+      <button id="sortMemes" type="button" title="Toggle oldest/newest">▼ Newest</button>
       <span id="filterCount" class="filter-count"></span>
     </div>
     <section class="card library-card">
@@ -1183,6 +1186,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   });
   const statusFilter = document.querySelector("#statusFilter");
   const memeSearch = document.querySelector("#memeSearch");
+  const sortMemes = document.querySelector("#sortMemes");
+  let newestFirst = true;
   let memeSignature = "";
   async function refreshMemeStatus() {
     try {
@@ -1215,6 +1220,18 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   }
   statusFilter.addEventListener("change", filterLibrary);
   memeSearch.addEventListener("input", filterLibrary);
+  sortMemes.addEventListener("click", () => {
+    newestFirst = !newestFirst;
+    sortMemes.textContent = newestFirst ? "▼ Newest" : "▲ Oldest";
+    const grid = document.querySelector(".meme-grid");
+    const cards = [...grid.querySelectorAll("[data-meme-id]")];
+    cards.sort((left, right) => {
+      const a = Date.parse(JSON.parse(left.dataset.meme).addedAt || 0);
+      const b = Date.parse(JSON.parse(right.dataset.meme).addedAt || 0);
+      return newestFirst ? b - a : a - b;
+    });
+    cards.forEach((card) => grid.appendChild(card));
+  });
   filterLibrary();
   if (libraryMode) {
     refreshMemeStatus();
