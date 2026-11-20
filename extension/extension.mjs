@@ -863,9 +863,6 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .level { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 8px; }
     .level-name { width: 142px; min-width: 142px; font-size: 21px; font-weight: 750; text-transform: capitalize; }
     .level-value { width: 36px; min-width: 36px; text-align: right; }
-    .level.max-humor { margin: -15px; padding: 15px; border-radius: 6px; color: #f8fafc; background: #050505; }
-    .level.max-humor .meter { opacity: .96; }
-    .level.max-humor .bar { border-color: #3f3f46; }
     .meter { flex: 1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
     .bar { height: 10px; border: 1px solid var(--lp-border); border-radius: 3px; background: var(--lp-control); }
     .bar.on { border-color: transparent; background: linear-gradient(90deg, #f97316, #ec4899); }
@@ -1035,7 +1032,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   <div class="control-page">
   <section class="card">
     <div class="eyebrow">Humor engine</div>
-    <div class="level ${profile.level === 4 ? "max-humor" : ""}">
+    <div class="level">
       <div class="level-name">${escapeHtml(levels[profile.level])}</div>
       <div class="meter">${levels.slice(1).map((_, index) =>
         `<div class="bar ${index < profile.level ? (index === 3 ? "dark-on" : "on") : ""}"></div>`
