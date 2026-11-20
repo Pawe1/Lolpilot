@@ -596,7 +596,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
               pending: "Queued for agent analysis",
               analyzing: "Agent is analyzing…",
               "needs-review": `Needs review · confidence ${Math.round((image.confidence || 0) * 100)}%`,
-              analyzed: `${image.emotion || "analyzed"} · ${Math.round((image.confidence || 0) * 100)}%`,
+              analyzed: `Analyzed · ${Math.round((image.confidence || 0) * 100)}% confidence · ${image.emotion || "ready"}`,
           }[image.analysisStatus] || (image.tags || []).join(" · ") || "No tags yet")}</small>
         </div>
         <button class="meme-delete" data-meme-delete="${escapeHtml(image.id)}" title="Delete meme">❌</button>
@@ -702,6 +702,13 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .add-menu.open { display: grid; }
     #memeFile { display: none; }
     .library-card { margin-top: 20px; }
+    .library-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+    .library-summary button { min-width: 150px; }
+    .library-page { display: none; }
+    body.library-open .control-page { display: none; }
+    body.library-open .library-page { display: block; }
+    .library-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+    .library-header h2 { margin: 0; flex: 1; }
     dialog { width: min(420px, calc(100vw - 32px)); border: 1px solid var(--lp-border); border-radius: 7px;
       color: inherit; background: var(--lp-card); box-shadow: 0 18px 60px #0008; }
     dialog::backdrop { background: #0009; backdrop-filter: blur(2px); }
@@ -752,6 +759,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     </div>
   </section>
 
+  <div class="control-page">
   <section class="card">
     <div class="eyebrow">Humor engine</div>
     <div class="level">
@@ -782,19 +790,9 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   </section>
   <section class="card library-card">
     <div class="eyebrow">Meme library</div>
-    <p class="fine">Drop an image on Add, or choose one source. The agent will analyze it after import.</p>
-    <div class="meme-actions">
-      <button id="addMeme" class="neutral">＋ Add image ▾</button>
-      <div class="add-menu" id="addMenu">
-        <button id="addFile">From file</button>
-        <button id="addUrl">From URL</button>
-        <button id="addClipboard">From clipboard</button>
-      </div>
-      <input id="memeFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
-    </div>
-    <div id="memeStatus" class="meme-status"></div>
-    <div class="meme-grid">
-      ${memeCards || '<p class="fine">No local memes yet.</p>'}
+    <div class="library-summary">
+      <span><strong>${memeIndex.images.length}</strong> templates · ${memeIndex.images.filter((image) => image.analysisStatus === "analyzed").length} analyzed</span>
+      <button id="openLibrary" class="neutral">Open library</button>
     </div>
   </section>
   <section class="card stats">
@@ -805,6 +803,32 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   <div class="status" id="status"></div>
   <p class="fine">Profile data: C:\\Dev\\lolpilot · Image cache: C:\\Dev\\lolpilot\\cache\\images</p>
   <p class="build-stamp">Lolpilot ${escapeHtml(BUILD_ID)} · loaded ${escapeHtml(BUILD_LOADED_AT)}</p>
+  </div>
+
+  <div class="library-page">
+    <div class="library-header">
+      <button id="closeLibrary">← Back</button>
+      <h2>Meme library</h2>
+      <span class="fine">${memeIndex.images.length} templates</span>
+    </div>
+    <section class="card library-card">
+      <div class="eyebrow">Add template</div>
+      <p class="fine">Drop an image on Add, or choose one source. The agent analyzes it automatically.</p>
+      <div class="meme-actions">
+        <button id="addMeme" class="neutral">＋ Add image ▾</button>
+        <div class="add-menu" id="addMenu">
+          <button id="addFile">From file</button>
+          <button id="addUrl">From URL</button>
+          <button id="addClipboard">From clipboard</button>
+        </div>
+        <input id="memeFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+      </div>
+      <div id="memeStatus" class="meme-status"></div>
+      <div class="meme-grid">
+        ${memeCards || '<p class="fine">No local memes yet.</p>'}
+      </div>
+    </section>
+  </div>
 
   <dialog id="createDialog">
     <form id="createForm" method="dialog">
@@ -829,6 +853,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
 </main>
 <script>
   const status = document.querySelector("#status");
+  document.querySelector("#openLibrary").addEventListener("click", () => document.body.classList.add("library-open"));
+  document.querySelector("#closeLibrary").addEventListener("click", () => document.body.classList.remove("library-open"));
   async function post(path, body) {
     const response = await fetch(path, {
       method: "POST",
