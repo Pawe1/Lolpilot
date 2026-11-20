@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { joinSession, createCanvas, CanvasError } from "@github/copilot-sdk/extension";
 
+const BUILD_LOADED_AT = new Date().toLocaleString("sv-SE", { timeZoneName: "short" });
 const ROOT = "C:\\Dev\\lolpilot";
 const ACTIVE_PROFILE_PATH = `${ROOT}\\profile.md`;
 const PROFILES_DIR = `${ROOT}\\profiles`;
@@ -15,6 +16,13 @@ const IMAGE_CACHE_DIR = `${ROOT}\\cache\\images`;
 const MEME_INDEX_PATH = `${ROOT}\\cache\\meme-index.json`;
 const servers = new Map();
 const execFileAsync = promisify(execFile);
+let BUILD_ID = "working-tree";
+try {
+    const { stdout } = await execFileAsync("git", ["-C", ROOT, "rev-parse", "--short", "HEAD"]);
+    BUILD_ID = stdout.toString().trim() || BUILD_ID;
+} catch {
+    // The extension still works if Git is unavailable at runtime.
+}
 
 const defaultProfile = {
     level: 2,
@@ -547,6 +555,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .stats strong { color: inherit; }
     .status { min-height: 20px; margin-top: 10px; color: #8b5cf6; text-align: center; font-weight: 650; }
     .fine { color: var(--lp-muted); font-size: 12px; }
+    .build-stamp { margin: 14px 0 0; padding-top: 8px; border-top: 1px solid var(--lp-border);
+      color: var(--lp-muted); font: 11px/1.3 var(--font-mono, Consolas, monospace); text-align: center; }
     a.export, .import { display: inline-grid; grid-auto-flow: column; align-items: center; justify-content: center; gap: 6px;
       width: 100%; min-height: 42px; padding: 8px 12px; border: 1px solid var(--lp-border); border-radius: 5px;
       color: inherit; background: var(--lp-control); font-weight: 700; text-decoration: none; }
@@ -675,6 +685,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   </section>
   <div class="status" id="status"></div>
   <p class="fine">Profile data: C:\\Dev\\lolpilot · Image cache: C:\\Dev\\lolpilot\\cache\\images</p>
+  <p class="build-stamp">Lolpilot ${escapeHtml(BUILD_ID)} · loaded ${escapeHtml(BUILD_LOADED_AT)}</p>
 
   <dialog id="createDialog">
     <form id="createForm" method="dialog">
