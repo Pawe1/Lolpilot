@@ -9,7 +9,7 @@ import {
 } from "./src/profiles.mjs";
 import {
     addMeme, addMemeFromUrl, analyzeMeme, analyzeMemeExample, analyzeMemeExampleFromUrl, analyzePendingMemes, deleteMeme, findMemes, keepMeme,
-    LAST_INDEX_RECOVERY, loadMemeIndex, recoverAnalysisState, replaceMeme, saveMemeIndex, syncAnalysisResults, backupMemeIndex,
+    LAST_INDEX_RECOVERY, loadMemeIndex, recoverAnalysisState, replaceMeme, saveMemeIndex, setKnowYourMemeUrl, syncAnalysisResults, backupMemeIndex,
 } from "./src/memes.mjs";
 
 const servers = new Map();
@@ -201,6 +201,10 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       padding:9px 10px; background:var(--lp-control); color:inherit; font:14px var(--font-sans,Segoe UI,sans-serif); }
     .identity-hint button { min-height:38px; border:1px solid var(--lp-border); border-radius:5px;
       background:var(--lp-control); color:inherit; font-weight:700; }
+    .kym-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:end; gap:8px; margin-top:12px; }
+    .kym-row label { grid-column:1 / -1; font-weight:700; }
+    .kym-row input { min-height:36px; }
+    .kym-row button, .kym-row a { min-height:36px; padding:7px 10px; }
     .meta-row { display:flex; align-items:center; justify-content:space-between; gap:8px; grid-column:2; }
     .status-chip { display:inline-flex; align-items:center; gap:5px; }
     .status-chip .dot { width:10px; height:10px; border-radius:50%; flex:0 0 auto; }
@@ -422,6 +426,12 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <button id="showIdentityHint" type="button">Suggest identity</button>
       <textarea id="galleryIdentityHint" hidden placeholder="Suggested template identity or context…" autofocus></textarea>
       <button id="reanalyzeIdentity" type="button" hidden disabled>Send suggestion & re-analyze</button>
+    </div>
+    <div class="kym-row">
+      <label for="knowYourMemeUrl">KnowYourMeme</label>
+      <input id="knowYourMemeUrl" type="url" placeholder="https://knowyourmeme.com/memes/...">
+      <button id="saveKnowYourMeme" type="button">Save</button>
+      <a id="openKnowYourMeme" href="#" target="_blank" rel="noreferrer" hidden>Open</a>
     </div>
     <div class="dialog-actions">
       <button type="button" id="deleteMeme" class="meme-delete">Delete</button>
@@ -785,6 +795,11 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   for (const button of document.querySelectorAll("[data-meme-id]")) {
     button.addEventListener("click", () => {
       selectedMeme = JSON.parse(button.dataset.meme);
+      const kymInput = document.querySelector("#knowYourMemeUrl");
+      const kymLink = document.querySelector("#openKnowYourMeme");
+      kymInput.value = selectedMeme.knowYourMemeUrl || "";
+      kymLink.hidden = !selectedMeme.knowYourMemeUrl;
+      if (selectedMeme.knowYourMemeUrl) kymLink.href = selectedMeme.knowYourMemeUrl;
       zonesVisible = false;
       exampleVisible = false;
       detailCanvas.hidden = true;
@@ -851,8 +866,23 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
             dd.querySelector(".status-chip span:last-child").textContent = percent + "%";
           }
         } else if (label === "Caption hints" || label === "Example caption") {
-          dd.innerHTML = '<span class="check-value"></span>';
-          dd.querySelector(".check-value").textContent = value ? "✅ complete" : "❌ missing";
+          const row = document.createElement("span");
+          row.className = "meta-row";
+          const check = document.createElement("span");
+          check.className = "check-value";
+          check.textContent = value ? "✅" : "❌";
+          check.title = value ? "complete" : "missing";
+          const add = document.createElement("button");
+          add.className = "meta-add";
+          add.textContent = "Add example";
+          add.addEventListener("click", (event) => {
+            event.stopPropagation();
+            exampleAnchor = add;
+            add.parentElement.after(exampleMenu);
+            exampleMenu.classList.toggle("open");
+          });
+          row.append(add, check);
+          dd.append(row);
         } else if (label === "Caption zones") {
           const row = document.createElement("span");
           row.className = "meta-row";
@@ -897,6 +927,23 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     });
   }
   document.querySelector("#closeMemeDetail").addEventListener("click", () => memeDetail.close());
+  document.querySelector("#saveKnowYourMeme").addEventListener("click", async () => {
+    if (!selectedMeme) return;
+    try {
+      const saved = await post("/api/meme/know-your-meme", {
+        id: selectedMeme.id,
+        url: document.querySelector("#knowYourMemeUrl").value,
+      });
+      selectedMeme = saved;
+      const link = document.querySelector("#openKnowYourMeme");
+      link.hidden = !saved.knowYourMemeUrl;
+      if (saved.knowYourMemeUrl) link.href = saved.knowYourMemeUrl;
+    } catch (error) {
+      document.querySelector("#knowYourMemeUrl").setCustomValidity(error.message);
+      document.querySelector("#knowYourMemeUrl").reportValidity();
+      setTimeout(() => document.querySelector("#knowYourMemeUrl").setCustomValidity(""), 3000);
+    }
+  });
   const exampleFile = document.querySelector("#exampleFile");
   const exampleMenu = document.querySelector("#exampleMenu");
   let exampleAnchor = null;
@@ -1171,6 +1218,11 @@ async function startServer() {
             if (request.method === "POST" && url.pathname === "/api/meme/keep") {
                 const body = await readBody(request);
                 sendJson(response, await keepMeme(body.id));
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/api/meme/know-your-meme") {
+                const body = await readBody(request);
+                sendJson(response, await setKnowYourMemeUrl(body.id, body.url));
                 return;
             }
             if (request.method === "GET" && url.pathname === "/api/meme/image") {

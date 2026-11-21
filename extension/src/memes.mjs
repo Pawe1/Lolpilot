@@ -642,7 +642,10 @@ export async function storeMemeAnalysis(id, content) {
     if (!existing) throw new CanvasError("meme_not_found", "Meme not found.");
     const analyzed = await updateMeme(id, {
         template: String(result.template || existing.template || "Unknown template").slice(0, 120),
-        templateAliases: (result.templateAliases || []).map((value) => String(value).slice(0, 120)).slice(0, 5),
+        templateAliases: [...new Set([
+            ...(existing.templateAliases || []),
+            ...(result.templateAliases || []).map((value) => String(value).slice(0, 120)),
+        ])].slice(0, 8),
         visualDescription: String(result.visualDescription || existing.visualDescription || "").slice(0, 500),
         emotion: String(result.emotion || existing.emotion || "").slice(0, 80),
         tone: [...new Set([
@@ -653,14 +656,14 @@ export async function storeMemeAnalysis(id, content) {
             ...(existing.captionRules || []),
             ...(result.captionRules || []).map((value) => String(value).slice(0, 180)),
         ])].slice(0, 12),
-        exampleCaptions: Array.isArray(result.exampleCaptions)
+        exampleCaptions: Array.isArray(result.exampleCaptions) && result.exampleCaptions.length
             ? result.exampleCaptions.map((example) => ({
                 texts: Array.isArray(example.texts) ? example.texts.map(String).slice(0, 8) : [],
                 locale: String(example.locale || "").slice(0, 20),
                 note: String(example.note || "").slice(0, 180),
             })).slice(0, 8)
             : existing.exampleCaptions || [],
-        captionZones: Array.isArray(result.captionZones)
+        captionZones: Array.isArray(result.captionZones) && result.captionZones.length
             ? result.captionZones.map((zone, index) => ({
                 id: String(zone.id || `zone-${index + 1}`).slice(0, 40),
                 role: String(zone.role || `text-${index + 1}`).slice(0, 80),
@@ -670,7 +673,7 @@ export async function storeMemeAnalysis(id, content) {
                 w: Math.max(0.05, Math.min(1, Number(zone.w) || 0.9)),
                 h: Math.max(0.05, Math.min(1, Number(zone.h) || 0.15)),
             })).slice(0, 8)
-            : [],
+            : existing.captionZones || [],
         tags: normalizeTags([...(existing.tags || []), ...(result.tags || [])].join(",")),
         confidence,
         analysisStatus: confidence < 0.55 ? "needs-review" : "analyzed",
