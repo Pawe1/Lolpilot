@@ -322,8 +322,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     <span class="answer-dot" id="answerDot" title="A new assistant answer completed"></span>
     <div class="answer-status" id="answerStatus"></div>
     <div class="buttons">
-      <button class="good" data-reaction="hit">Hit</button>
-      <button class="bad" data-reaction="miss">Meh</button>
+      <button class="good" data-reaction="hit">😬 Hit</button>
+      <button class="bad" data-reaction="miss">😐 Meh</button>
     </div>
   </section>
   <section class="card">
