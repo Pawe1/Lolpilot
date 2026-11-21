@@ -1463,25 +1463,14 @@ function drawCaptionInZone(text, savedZone) {
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   ctx.lineJoin = "round";
-  ctx.lineWidth = Math.max(3, Math.round(fontSize / 7));
+  ctx.lineWidth = Math.max(2, Math.round(fontSize / 10));
   ctx.strokeStyle = "#000";
   ctx.fillStyle = "#fff";
   const startY = y + Math.max(0, (height - lines.length * lineHeight) / 2);
-  if (fontSize < canvas.width / 24) {
-    const padding = Math.max(4, fontSize * .22);
-    const blockHeight = lines.length * lineHeight + padding * 2;
-    ctx.save();
-    ctx.fillStyle = "rgba(0, 0, 0, .5)";
-    ctx.fillRect(x, startY - padding, width, blockHeight);
-    ctx.restore();
-  }
   lines.forEach((line, index) => {
     const y = startY + index * lineHeight;
-    ctx.shadowColor = "rgba(0, 0, 0, .9)";
-    ctx.shadowBlur = Math.max(2, Math.round(fontSize / 10));
     ctx.strokeText(line, x + width / 2, y, width);
     ctx.fillText(line, x + width / 2, y, width);
-    ctx.shadowBlur = 0;
   });
 }
 
