@@ -334,6 +334,25 @@ export async function recoverAnalysisState() {
     const index = await loadMemeIndex();
     let changed = false;
     for (const image of index.images) {
+        const duplicate = image.duplicateOf
+            ? index.images.find((candidate) => candidate.id === image.duplicateOf)
+            : null;
+        if (duplicate && image.analysisStatus === "duplicate") {
+            const names = [image.template, ...(image.templateAliases || [])].filter(Boolean)
+                .map((value) => value.toLocaleLowerCase());
+            const duplicateNames = [duplicate.template, ...(duplicate.templateAliases || [])].filter(Boolean)
+                .map((value) => value.toLocaleLowerCase());
+            const sameName = names.some((name) => duplicateNames.includes(name));
+            const visuallyClose = perceptualDistance(image, duplicate) <= 8;
+            if (!sameName && !visuallyClose) {
+                image.duplicateOf = "";
+                image.replacementSuggested = false;
+                image.analysisStatus = Number(image.confidence || 0) >= 0.55 ? "analyzed" : "needs-review";
+                image.analysisError = "";
+                changed = true;
+                continue;
+            }
+        }
         if (image.duplicateOf && image.analysisStatus === "needs-review") {
             image.analysisStatus = "duplicate";
             changed = true;
@@ -371,6 +390,8 @@ export function curatorPrompt(image) {
         "Write exactly one JSON object to this absolute output path:",
         `"${outputPath}"`,
         "Required shape: { template, templateAliases, visualDescription, emotion, tone, captionRules, tags, confidence, id }.",
+        "Also include captionZones: normalized text box regions with id, role, captionHint, x, y, w, h where 0..1 are fractions of image width/height.",
+        "For each captionHint describe the joke shape normally used there, such as setup, rejection, escalation, punchline, bad option, tempting option, observation, or sarcastic reply.",
         `Set id to "${image.id}".`,
         "templateAliases is at most 5 strings; tone at most 5; captionRules at most 8; tags at most 16; confidence is 0..1.",
         "Return no conversational reply beyond confirming the file was written.",
@@ -480,6 +501,17 @@ export async function storeMemeAnalysis(id, content) {
         emotion: String(result.emotion || "").slice(0, 80),
         tone: (result.tone || []).map((value) => String(value).slice(0, 60)).slice(0, 5),
         captionRules: (result.captionRules || []).map((value) => String(value).slice(0, 180)).slice(0, 8),
+        captionZones: Array.isArray(result.captionZones)
+            ? result.captionZones.map((zone, index) => ({
+                id: String(zone.id || `zone-${index + 1}`).slice(0, 40),
+                role: String(zone.role || `text-${index + 1}`).slice(0, 80),
+                captionHint: String(zone.captionHint || "").slice(0, 180),
+                x: Math.max(0, Math.min(1, Number(zone.x) || 0)),
+                y: Math.max(0, Math.min(1, Number(zone.y) || 0)),
+                w: Math.max(0.05, Math.min(1, Number(zone.w) || 0.9)),
+                h: Math.max(0.05, Math.min(1, Number(zone.h) || 0.15)),
+            })).slice(0, 8)
+            : [],
         tags: normalizeTags((result.tags || []).join(",")),
         confidence,
         analysisStatus: confidence < 0.55 ? "needs-review" : "analyzed",
@@ -494,11 +526,7 @@ export async function storeMemeAnalysis(id, content) {
             .filter(Boolean).map((value) => value.toLocaleLowerCase());
         const knownNameMatch = !analyzedNames.includes("unknown template")
             && candidateNames.some((name) => analyzedNames.includes(name));
-        const descriptionMatch = image.visualDescription && analyzed.visualDescription
-            && normalizeTags(image.visualDescription).slice(0, 12).filter((tag) =>
-                normalizeTags(analyzed.visualDescription).includes(tag)
-            ).length >= 5;
-        return knownNameMatch || descriptionMatch || perceptualDistance(image, analyzed) <= 8;
+        return knownNameMatch || perceptualDistance(image, analyzed) <= 8;
     });
     if (sameTemplate) {
         return updateMeme(id, {
