@@ -718,6 +718,14 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       const rows = [
         ["Status", selectedMeme.duplicateOf ? "Duplicate decision" : selectedMeme.analysisStatus],
         ["Confidence", selectedMeme.confidence ? Math.round(selectedMeme.confidence * 100) + "%" : "—"],
+        ["Caption zones", (selectedMeme.captionZones || []).length
+          ? (selectedMeme.captionZones || []).filter((zone) => Number.isFinite(zone.x) && Number.isFinite(zone.y)
+              && Number.isFinite(zone.w) && Number.isFinite(zone.h)).length + "/" + selectedMeme.captionZones.length + " complete"
+          : "missing"],
+        ["Caption hints", (selectedMeme.captionZones || []).length
+          && (selectedMeme.captionZones || []).every((zone) => (zone.captionHint || "").trim())
+          ? "complete" : "missing"],
+        ["Example caption", (selectedMeme.exampleCaptions || []).length ? "available" : "missing"],
         ["Emotion", selectedMeme.emotion || "—"],
         ["Tone", (selectedMeme.tone || []).join(", ") || "—"],
         ["Tags", (selectedMeme.tags || []).join(", ") || "—"],
