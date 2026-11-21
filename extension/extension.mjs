@@ -813,10 +813,9 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       const rows = [
         ["Status", selectedMeme.duplicateOf ? "duplicate" : selectedMeme.analysisStatus],
         ["Confidence", selectedMeme.confidence ? selectedMeme.confidence : null],
-        ["Caption zones", (selectedMeme.captionZones || []).length
-          ? (selectedMeme.captionZones || []).filter((zone) => Number.isFinite(zone.x) && Number.isFinite(zone.y)
-              && Number.isFinite(zone.w) && Number.isFinite(zone.h)).length + "/" + selectedMeme.captionZones.length + " complete"
-          : "missing"],
+        ["Caption zones", Boolean((selectedMeme.captionZones || []).length
+          && (selectedMeme.captionZones || []).every((zone) => Number.isFinite(zone.x) && Number.isFinite(zone.y)
+              && Number.isFinite(zone.w) && Number.isFinite(zone.h)))],
         ["Caption hints", Boolean((selectedMeme.captionZones || []).length
           && (selectedMeme.captionZones || []).every((zone) => (zone.captionHint || "").trim()))],
         ["Example caption", Boolean((selectedMeme.exampleCaptions || []).length)],
@@ -857,8 +856,13 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         } else if (label === "Caption zones") {
           const row = document.createElement("span");
           row.className = "meta-row";
-          const text = document.createElement("span");
-          text.textContent = value;
+          const check = document.createElement("span");
+          check.className = "check-value";
+          check.textContent = value ? "✅" : "❌";
+          const completeZones = (selectedMeme.captionZones || []).filter((zone) =>
+            Number.isFinite(zone.x) && Number.isFinite(zone.y)
+            && Number.isFinite(zone.w) && Number.isFinite(zone.h)).length;
+          check.title = completeZones + "/" + (selectedMeme.captionZones || []).length + " zones complete";
           const add = document.createElement("button");
           add.className = "meta-add";
           add.textContent = "Add example";
@@ -868,8 +872,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
             add.parentElement.after(exampleMenu);
             document.querySelector("#exampleMenu").classList.toggle("open");
           });
-          row.append(text, add);
-          if (label === "Caption zones" && (selectedMeme.captionZones || []).length) {
+          if ((selectedMeme.captionZones || []).length) {
             const show = document.createElement("button");
             show.id = "toggleZones";
             show.className = "meta-add";
@@ -883,20 +886,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
             });
             row.append(show);
           }
-          if (label === "Example caption" && (selectedMeme.exampleCaptions || []).length) {
-            const use = document.createElement("button");
-            use.id = "toggleExample";
-            use.className = "meta-add";
-            use.textContent = "Show";
-            use.addEventListener("click", () => {
-              exampleVisible = !exampleVisible;
-              detailImage.hidden = zonesVisible || exampleVisible;
-              detailCanvas.hidden = !(zonesVisible || exampleVisible);
-              use.textContent = exampleVisible ? "Hide" : "Show";
-              renderDetailCanvas();
-            });
-            row.append(use);
-          }
+          row.append(add, check);
           dd.append(row);
         } else {
           dd.textContent = value;
