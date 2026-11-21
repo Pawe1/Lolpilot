@@ -881,7 +881,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
             add.parentElement.after(exampleMenu);
             exampleMenu.classList.toggle("open");
           });
-          row.append(add, check);
+          row.append(check, add);
           dd.append(row);
         } else if (label === "Caption zones") {
           const row = document.createElement("span");
