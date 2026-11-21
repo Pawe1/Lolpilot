@@ -1441,6 +1441,17 @@ async function startPreviewServer(_instanceId, image, captionTexts = []) {
                 current.feedback = { ...(current.feedback || {}) };
                 current.feedback[body.value] = Number(current.feedback[body.value] || 0) + 1;
                 current.feedback.last = body.value;
+                const note = String(body.note || "").trim().slice(0, 1000);
+                if (note) {
+                    current.feedback.notes = [
+                        ...(current.feedback.notes || []),
+                        {
+                            value: body.value,
+                            note,
+                            createdAt: new Date().toISOString(),
+                        },
+                    ].slice(-20);
+                }
                 current.uses = Number(current.uses || 0) + 1;
                 current.updatedAt = new Date().toISOString();
                 await saveMemeIndex(index);
@@ -1481,13 +1492,25 @@ async function startPreviewServer(_instanceId, image, captionTexts = []) {
     color:#111827; background:#fff; font:700 14px var(--font-sans,Segoe UI,sans-serif); cursor:pointer; }
   #hit, #miss { background:#fff; border-color:#d1d5db; }
   .feedback button.selected { outline:3px solid #8b5cf6; outline-offset:1px; }
+  .feedback-note { display:none; gap:8px; margin-top:10px; }
+  .feedback-note.open { display:flex; }
+  .feedback-note textarea { flex:1; min-height:72px; resize:vertical; border:1px solid #475569; border-radius:5px;
+    padding:8px 10px; background:var(--background-color-inset,#fff); color:var(--text-color-default,#111827);
+    font:14px var(--font-sans,Segoe UI,sans-serif); }
+  .feedback-note button { align-self:flex-end; min-height:38px; border:1px solid #475569; border-radius:5px;
+    background:#fff; color:#111827; font:700 13px var(--font-sans,Segoe UI,sans-serif); cursor:pointer; }
   .dismiss-hint { display:block; padding:8px 0 0; color:var(--text-color-muted,#9da7b3); text-align:center; font-size:12px; }
 </style></head><body>
 <main>
   <canvas id="preview" aria-label="${escapeHtml(image.template || "Meme editor")}"></canvas>
   <div class="feedback">
     <button id="miss" aria-label="Meh" title="Meh">😐</button>
+    <button id="missNote" aria-label="Meh with feedback" title="Słabe — dodaj opis">😐 + note</button>
     <button id="hit" aria-label="Hit" title="Hit">😬</button>
+  </div>
+  <div id="feedbackNote" class="feedback-note">
+    <textarea id="feedbackText" maxlength="1000" placeholder="Co było słabe albo co to miało trafić lepiej?"></textarea>
+    <button id="sendFeedback" type="button">Save feedback</button>
   </div>
   <small class="dismiss-hint">Click image to dismiss</small>
 </main>
@@ -1582,11 +1605,11 @@ function render() {
   }
 }
 
-async function rate(value) {
+async function rate(value, note = "") {
   const response = await fetch("/rate", {
     method:"POST",
     headers: {"content-type":"application/json"},
-    body: JSON.stringify({ value })
+    body: JSON.stringify({ value, note })
   });
   if (!response.ok) return;
   document.querySelectorAll(".feedback button").forEach((button) => button.classList.remove("selected"));
@@ -1594,6 +1617,21 @@ async function rate(value) {
 }
 document.querySelector("#hit").addEventListener("click", () => rate("hit"));
 document.querySelector("#miss").addEventListener("click", () => rate("miss"));
+document.querySelector("#missNote").addEventListener("click", () => {
+  const note = document.querySelector("#feedbackNote");
+  note.classList.add("open");
+  document.querySelector("#feedbackText").focus();
+});
+document.querySelector("#sendFeedback").addEventListener("click", async () => {
+  const text = document.querySelector("#feedbackText");
+  if (!text.value.trim()) {
+    text.focus();
+    return;
+  }
+  await rate("miss", text.value);
+  text.value = "";
+  document.querySelector("#feedbackNote").classList.remove("open");
+});
 canvas.addEventListener("click", () => {
   document.querySelector("main").classList.add("dismissing");
   setTimeout(() => {
