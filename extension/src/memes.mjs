@@ -12,16 +12,21 @@ import { ROOT, ANALYSIS_DIR, IMAGE_CACHE_DIR, MEME_INDEX_PATH } from "./config.m
 const analysisWorkers = new Map();
 const MAX_ANALYSIS_WORKERS = 3;
 const execFileAsync = promisify(execFile);
+export let LAST_INDEX_RECOVERY = false;
 export async function loadMemeIndex() {
     try {
         const parsed = JSON.parse(await readFile(MEME_INDEX_PATH, "utf8"));
+        LAST_INDEX_RECOVERY = false;
         return {
             version: 1,
             images: Array.isArray(parsed.images) ? parsed.images : [],
         };
     } catch (error) {
         const recovered = await restoreMemeIndexBackup();
-        if (recovered) return recovered;
+        if (recovered) {
+            LAST_INDEX_RECOVERY = true;
+            return recovered;
+        }
         return { version: 1, images: [] };
     }
 }

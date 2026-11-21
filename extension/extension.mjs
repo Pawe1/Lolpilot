@@ -9,7 +9,7 @@ import {
 } from "./src/profiles.mjs";
 import {
     addMeme, addMemeFromUrl, analyzeMeme, analyzeMemeExample, analyzeMemeExampleFromUrl, analyzePendingMemes, deleteMeme, findMemes, keepMeme,
-    loadMemeIndex, recoverAnalysisState, replaceMeme, saveMemeIndex, syncAnalysisResults,
+    LAST_INDEX_RECOVERY, loadMemeIndex, recoverAnalysisState, replaceMeme, saveMemeIndex, syncAnalysisResults, backupMemeIndex,
 } from "./src/memes.mjs";
 
 const servers = new Map();
@@ -206,7 +206,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .meta-row { display:flex; align-items:center; justify-content:space-between; gap:8px; grid-column:2; }
     .meta-add { min-height:28px; padding:4px 8px; border:1px solid var(--lp-border); border-radius:5px;
       color:inherit; background:var(--lp-control); font-size:12px; }
-    .example-menu { display:none; gap:6px; margin-top:6px; grid-column:2; }
+    .example-menu { display:none; gap:6px; margin-top:6px; padding:6px; border:1px solid var(--lp-border);
+      border-radius:5px; background:var(--lp-card); box-shadow:0 8px 24px #0002; }
     .example-menu.open { display:flex; }
     .example-menu button { min-height:30px; padding:4px 8px; }
     #exampleFile { display:none; }
@@ -837,6 +838,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
           add.textContent = "Add example";
           add.addEventListener("click", (event) => {
             event.stopPropagation();
+            exampleAnchor = add;
+            add.parentElement.after(exampleMenu);
             document.querySelector("#exampleMenu").classList.toggle("open");
           });
           row.append(text, add);
@@ -866,6 +869,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   document.querySelector("#closeMemeDetail").addEventListener("click", () => memeDetail.close());
   const exampleFile = document.querySelector("#exampleFile");
   const exampleMenu = document.querySelector("#exampleMenu");
+  let exampleAnchor = null;
   async function importExampleFile(file) {
     if (!selectedMeme) return;
     const dataUrl = await new Promise((resolve, reject) => {
@@ -881,6 +885,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       dataUrl,
     });
     exampleMenu.classList.remove("open");
+    exampleAnchor = null;
   }
   document.querySelector("#exampleFromFile").addEventListener("click", () => exampleFile.click());
   exampleFile.addEventListener("change", async () => {
@@ -891,6 +896,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     const url = prompt("Reference meme URL (PNG, JPEG, GIF, or WebP):");
     if (!url || !selectedMeme) return;
     await post("/api/meme/analyze-example-url", { id: selectedMeme.id, url });
+    exampleMenu.classList.remove("open");
   });
   document.querySelector("#exampleFromClipboard").addEventListener("click", async () => {
     const items = await navigator.clipboard.read();
@@ -903,6 +909,13 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       "reference." + type.split("/")[1],
       { type }
     ));
+    exampleMenu.classList.remove("open");
+  });
+  memeDetail.addEventListener("click", (event) => {
+    if (exampleAnchor && !exampleMenu.contains(event.target) && event.target !== exampleAnchor) {
+      exampleMenu.classList.remove("open");
+      exampleAnchor = null;
+    }
   });
   const galleryIdentityHint = document.querySelector("#galleryIdentityHint");
   const reanalyzeIdentity = document.querySelector("#reanalyzeIdentity");
@@ -1015,6 +1028,7 @@ function sendJson(response, value, status = 200) {
 async function startServer() {
     await listProfiles();
     await mkdir(IMAGE_CACHE_DIR, { recursive: true });
+    await backupMemeIndex();
     await recoverAnalysisState();
     const server = createServer(async (request, response) => {
         try {
@@ -1098,6 +1112,7 @@ async function startServer() {
                 const index = await loadMemeIndex();
                 sendJson(response, {
                     changed,
+                    recoveredFromBackup: LAST_INDEX_RECOVERY,
                     signature: index.images
                         .map((image) => `${image.id}:${image.analysisStatus}:${image.updatedAt || ""}`)
                         .join("|"),
