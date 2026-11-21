@@ -340,9 +340,9 @@ export async function recoverAnalysisState() {
             changed = true;
         } else if (
             image.analysisStatus === "needs-review"
-            && Number(image.confidence || 0) >= 0.55
             && !image.duplicateOf
-            && /(?:file|written|path).*cache[\\/]analysis/i.test(image.analysisError || "")
+            && image.template
+            && Number(image.confidence || 0) >= 0.55
         ) {
             image.analysisStatus = "analyzed";
             image.analysisError = "";
