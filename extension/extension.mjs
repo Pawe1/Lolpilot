@@ -8,7 +8,7 @@ import {
     profileContext, saveActiveProfile, suggestPrMeme, switchProfile,
 } from "./src/profiles.mjs";
 import {
-    addMeme, addMemeFromUrl, analyzeMeme, analyzePendingMemes, deleteMeme, findMemes, keepMeme,
+    addMeme, addMemeFromUrl, analyzeMeme, analyzeMemeExample, analyzeMemeExampleFromUrl, analyzePendingMemes, deleteMeme, findMemes, keepMeme,
     loadMemeIndex, recoverAnalysisState, replaceMeme, saveMemeIndex, syncAnalysisResults,
 } from "./src/memes.mjs";
 
@@ -199,6 +199,13 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       padding:9px 10px; background:var(--lp-control); color:inherit; font:14px var(--font-sans,Segoe UI,sans-serif); }
     .identity-hint button { min-height:38px; border:1px solid var(--lp-border); border-radius:5px;
       background:var(--lp-control); color:inherit; font-weight:700; }
+    .meta-row { display:flex; align-items:center; justify-content:space-between; gap:8px; grid-column:2; }
+    .meta-add { min-height:28px; padding:4px 8px; border:1px solid var(--lp-border); border-radius:5px;
+      color:inherit; background:var(--lp-control); font-size:12px; }
+    .example-menu { display:none; gap:6px; margin-top:6px; grid-column:2; }
+    .example-menu.open { display:flex; }
+    .example-menu button { min-height:30px; padding:4px 8px; }
+    #exampleFile { display:none; }
     dialog { width: min(420px, calc(100vw - 32px)); border: 1px solid var(--lp-border); border-radius: 7px;
       color: inherit; background: var(--lp-card); box-shadow: 0 18px 60px #0008; }
     dialog::backdrop { background: #0009; backdrop-filter: blur(2px); }
@@ -384,6 +391,12 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <img id="duplicateImage" alt="">
       <p id="duplicateTitle"></p>
       <p id="duplicateDimensions" class="fine"></p>
+    </div>
+    <input id="exampleFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+    <div id="exampleMenu" class="example-menu">
+      <button id="exampleFromFile">File</button>
+      <button id="exampleFromUrl">URL</button>
+      <button id="exampleFromClipboard">Clipboard</button>
     </div>
     <div class="identity-hint">
       <button id="showIdentityHint" type="button">Suggest identity</button>
@@ -736,13 +749,69 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         const dt = document.createElement("dt");
         const dd = document.createElement("dd");
         dt.textContent = label;
-        dd.textContent = value;
+        if (["Caption zones", "Caption hints", "Example caption"].includes(label)) {
+          const row = document.createElement("span");
+          row.className = "meta-row";
+          const text = document.createElement("span");
+          text.textContent = value;
+          const add = document.createElement("button");
+          add.className = "meta-add";
+          add.textContent = "Add example";
+          add.addEventListener("click", (event) => {
+            event.stopPropagation();
+            document.querySelector("#exampleMenu").classList.toggle("open");
+          });
+          row.append(text, add);
+          dd.append(row);
+        } else {
+          dd.textContent = value;
+        }
         return [dt, dd];
       }));
       memeDetail.showModal();
     });
   }
   document.querySelector("#closeMemeDetail").addEventListener("click", () => memeDetail.close());
+  const exampleFile = document.querySelector("#exampleFile");
+  const exampleMenu = document.querySelector("#exampleMenu");
+  async function importExampleFile(file) {
+    if (!selectedMeme) return;
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("Could not read the reference image."));
+      reader.readAsDataURL(file);
+    });
+    await post("/api/meme/analyze-example", {
+      id: selectedMeme.id,
+      fileName: file.name,
+      mimeType: file.type,
+      dataUrl,
+    });
+    exampleMenu.classList.remove("open");
+  }
+  document.querySelector("#exampleFromFile").addEventListener("click", () => exampleFile.click());
+  exampleFile.addEventListener("change", async () => {
+    if (exampleFile.files.length) await importExampleFile(exampleFile.files[0]);
+    exampleFile.value = "";
+  });
+  document.querySelector("#exampleFromUrl").addEventListener("click", async () => {
+    const url = prompt("Reference meme URL (PNG, JPEG, GIF, or WebP):");
+    if (!url || !selectedMeme) return;
+    await post("/api/meme/analyze-example-url", { id: selectedMeme.id, url });
+  });
+  document.querySelector("#exampleFromClipboard").addEventListener("click", async () => {
+    const items = await navigator.clipboard.read();
+    const type = ["image/png", "image/jpeg", "image/gif", "image/webp"].find((candidate) =>
+      items.some((item) => item.types.includes(candidate)));
+    if (!type) throw new Error("Clipboard does not contain a supported image.");
+    const item = items.find((candidate) => candidate.types.includes(type));
+    await importExampleFile(new File(
+      [await item.getType(type)],
+      "reference." + type.split("/")[1],
+      { type }
+    ));
+  });
   const galleryIdentityHint = document.querySelector("#galleryIdentityHint");
   const reanalyzeIdentity = document.querySelector("#reanalyzeIdentity");
   document.querySelector("#showIdentityHint").addEventListener("click", () => {
@@ -916,6 +985,20 @@ async function startServer() {
             if (request.method === "POST" && url.pathname === "/api/meme/analyze") {
                 const body = await readBody(request);
                 sendJson(response, await analyzeMeme(body.id, body.hint || ""));
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/api/meme/analyze-example") {
+                const body = await readBody(request);
+                sendJson(response, await analyzeMemeExample(body.id, {
+                    fileName: body.fileName,
+                    mimeType: body.mimeType,
+                    dataUrl: body.dataUrl,
+                }));
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/api/meme/analyze-example-url") {
+                const body = await readBody(request);
+                sendJson(response, await analyzeMemeExampleFromUrl(body.id, body.url));
                 return;
             }
             if (request.method === "GET" && url.pathname === "/api/memes/status") {

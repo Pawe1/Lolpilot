@@ -398,6 +398,19 @@ export function curatorPrompt(image) {
     ].join(" ");
 }
 
+export function curatorExamplePrompt(image, referenceHint = "") {
+    return [
+        "Analyze this completed meme as a visual/caption reference for an existing template.",
+        `Target template: "${image.template || "Unknown template"}".`,
+        "Extract exact caption placement as normalized captionZones with id, role, captionHint, x, y, w, h.",
+        "Infer the humor pattern from the visible wording: irony, deadpan, absurdity, wordplay, self-deprecation, escalation, reversal, overreaction, sarcasm, callback, or other concise tone tags.",
+        "Return exampleCaptions with texts in reading order, locale, and note describing the rhythm/structure.",
+        "Return tone and captionRules to merge with the target template. Keep facts separate from confidence.",
+        referenceHint ? `Reference note: "${String(referenceHint).replaceAll('"', "'")}".` : "",
+        `Set id to "${image.id}".`,
+    ].filter(Boolean).join(" ");
+}
+
 export function findCopilotCli() {
     const localAppData = process.env.LOCALAPPDATA;
     if (!localAppData) return null;
@@ -432,6 +445,7 @@ export async function analyzeMeme(id, hint = "") {
         });
         throw new CanvasError("curator_unavailable", "Local Copilot CLI worker is unavailable.");
     }
+
     try {
         if (analysisWorkers.has(id)) return { ...image, analysisStatus: "analyzing" };
         const child = execFile("node", [
@@ -476,6 +490,68 @@ export async function analyzeMeme(id, hint = "") {
         });
         throw error;
     }
+}
+
+export async function analyzeMemeExample(id, input) {
+    const image = (await loadMemeIndex()).images.find((candidate) => candidate.id === id);
+    if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+    const temporaryId = `${id}-example-${Date.now()}`;
+    const match = String(input.dataUrl || "").match(/^data:[^;]+;base64,(.+)$/);
+    if (!match) throw new CanvasError("invalid_image", "The reference image could not be read.");
+    const bytes = Buffer.from(match[1], "base64");
+    const extension = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" }[input.mimeType];
+    if (!extension) throw new CanvasError("invalid_image_type", "Use PNG, JPEG, GIF, or WebP.");
+    await mkdir(ANALYSIS_DIR, { recursive: true });
+    const referencePath = `${ANALYSIS_DIR}\\${temporaryId}.${extension}`;
+    await writeFile(referencePath, bytes);
+    await updateMeme(id, {
+        analysisStatus: "analyzing",
+        analysisHint: `Reference image supplied at ${referencePath}`,
+    });
+    const cli = findCopilotCli();
+    if (!cli) throw new CanvasError("curator_unavailable", "Local Copilot CLI worker is unavailable.");
+    const child = execFile("node", [
+        cli,
+        `--prompt=${curatorExamplePrompt({ ...image, analysisHint: `Inspect the reference image at ${referencePath}` })}`,
+        "--silent",
+        "--allow-all-tools",
+        "--trust-folder",
+        "--model=auto",
+        `--name=Lolpilot-Meme-Example-${id}`,
+        "--disable-client-telemetry",
+    ], {
+        cwd: ROOT,
+        windowsHide: true,
+        maxBuffer: 2 * 1024 * 1024,
+        timeout: 240000,
+    }, async (error, stdout, stderr) => {
+        try {
+            if (!await syncAnalysisResult(id)) {
+                await updateMeme(id, {
+                    analysisStatus: "needs-review",
+                    analysisError: error?.message || `${stdout || ""}\n${stderr || ""}`.trim().slice(0, 240),
+                });
+            }
+        } finally {
+            await unlink(referencePath).catch(() => {});
+        }
+    });
+    return { id, analysisStatus: "analyzing", workerPid: child.pid || undefined };
+}
+
+export async function analyzeMemeExampleFromUrl(id, url) {
+    const parsed = await fetchImageUrl(url);
+    if (parsed.status < 200 || parsed.status >= 300) {
+        throw new CanvasError("image_url_failed", `Reference URL returned HTTP ${parsed.status}.`);
+    }
+    if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(parsed.mimeType)) {
+        throw new CanvasError("invalid_image_type", "The reference URL must point to PNG, JPEG, GIF, or WebP.");
+    }
+    return analyzeMemeExample(id, {
+        fileName: parsed.parsed.pathname.split("/").pop() || "reference",
+        mimeType: parsed.mimeType,
+        dataUrl: `data:${parsed.mimeType};base64,${parsed.bytes.toString("base64")}`,
+    });
 }
 
 export function parseAnalysisContent(content) {
