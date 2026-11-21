@@ -634,7 +634,10 @@ export function parseAnalysisContent(content) {
 
 export async function storeMemeAnalysis(id, content) {
     const result = parseAnalysisContent(content);
-    const confidence = Number(result?.confidence);
+    const confidenceValue = typeof result?.confidence === "object"
+        ? result.confidence.overall ?? result.confidence.targetTemplate
+        : result?.confidence;
+    const confidence = Number(confidenceValue);
     if (!result || !Number.isFinite(confidence)) {
         throw new Error("The analysis result did not contain a valid confidence value.");
     }

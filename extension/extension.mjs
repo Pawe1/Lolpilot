@@ -914,9 +914,10 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
               show.textContent = zonesVisible ? "Hide" : "Show";
               renderDetailCanvas();
             });
-            row.append(show);
+            row.prepend(show);
           }
-          row.append(add, check);
+          row.prepend(check);
+          row.append(add);
           dd.append(row);
         } else {
           dd.textContent = value;
