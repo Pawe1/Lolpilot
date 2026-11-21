@@ -1564,8 +1564,8 @@ function drawCaptionInZone(text, savedZone) {
   const startY = y + Math.max(0, (height - lines.length * lineHeight) / 2);
   lines.forEach((line, index) => {
     const y = startY + index * lineHeight;
-    ctx.strokeText(line, x + width / 2, y, width);
-    ctx.fillText(line, x + width / 2, y, width);
+    ctx.strokeText(line, x + width / 2, y);
+    ctx.fillText(line, x + width / 2, y);
   });
 }
 
