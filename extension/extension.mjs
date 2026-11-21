@@ -1018,7 +1018,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   reanalyzeIdentity.addEventListener("click", () => {
     const hint = galleryIdentityHint.value.trim();
     if (!selectedMeme || !hint) return;
-    const kymMatch = hint.match(/https?:\/\/(?:www\.)?knowyourmeme\.com\/[^\s"'<>]+/i);
+    const kymMatch = hint.match(/https?:[/][/](?:www[.])?knowyourmeme[.]com[/][^ "'<>]+/i);
     const knowYourMemeUrl = kymMatch?.[0] || "";
     run(async () => {
       if (knowYourMemeUrl) {
