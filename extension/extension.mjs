@@ -202,6 +202,15 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .identity-hint button { min-height:38px; border:1px solid var(--lp-border); border-radius:5px;
       background:var(--lp-control); color:inherit; font-weight:700; }
     .meta-row { display:flex; align-items:center; justify-content:space-between; gap:8px; grid-column:2; }
+    .status-chip { display:inline-flex; align-items:center; gap:5px; }
+    .status-chip .dot { width:10px; height:10px; border-radius:50%; flex:0 0 auto; }
+    .dot-good { background:#22c55e; }
+    .dot-warn { background:#eab308; }
+    .dot-bad { background:#ef4444; }
+    .dot-analyzing { background:#3b82f6; }
+    .dot-duplicate { background:#eab308; }
+    .dot-review { background:#475569; }
+    .check-value { font-weight:700; }
     .meta-add { min-height:28px; padding:4px 8px; border:1px solid var(--lp-border); border-radius:5px;
       color:inherit; background:var(--lp-control); font-size:12px; }
     .meta-add.pending { position:relative; padding-left:20px; }
@@ -802,16 +811,15 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         }
       }
       const rows = [
-        ["Status", selectedMeme.duplicateOf ? "Duplicate decision" : selectedMeme.analysisStatus],
-        ["Confidence", selectedMeme.confidence ? Math.round(selectedMeme.confidence * 100) + "%" : "—"],
+        ["Status", selectedMeme.duplicateOf ? "duplicate" : selectedMeme.analysisStatus],
+        ["Confidence", selectedMeme.confidence ? selectedMeme.confidence : null],
         ["Caption zones", (selectedMeme.captionZones || []).length
           ? (selectedMeme.captionZones || []).filter((zone) => Number.isFinite(zone.x) && Number.isFinite(zone.y)
               && Number.isFinite(zone.w) && Number.isFinite(zone.h)).length + "/" + selectedMeme.captionZones.length + " complete"
           : "missing"],
-        ["Caption hints", (selectedMeme.captionZones || []).length
-          && (selectedMeme.captionZones || []).every((zone) => (zone.captionHint || "").trim())
-          ? "complete" : "missing"],
-        ["Example caption", (selectedMeme.exampleCaptions || []).length ? "available" : "missing"],
+        ["Caption hints", Boolean((selectedMeme.captionZones || []).length
+          && (selectedMeme.captionZones || []).every((zone) => (zone.captionHint || "").trim()))],
+        ["Example caption", Boolean((selectedMeme.exampleCaptions || []).length)],
         ["Emotion", selectedMeme.emotion || "—"],
         ["Tone", (selectedMeme.tone || []).join(", ") || "—"],
         ["Tags", (selectedMeme.tags || []).join(", ") || "—"],
@@ -822,7 +830,31 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         const dt = document.createElement("dt");
         const dd = document.createElement("dd");
         dt.textContent = label;
-        if (["Caption zones", "Caption hints", "Example caption"].includes(label)) {
+        if (label === "Status") {
+          const statusClass = {
+            analyzed: "dot-good",
+            analyzing: "dot-analyzing",
+            pending: "dot-warn",
+            duplicate: "dot-duplicate",
+            "needs-review": "dot-review",
+          }[value] || "dot-review";
+          dd.innerHTML = '<span class="status-chip"><span class="dot ' + statusClass +
+            '"></span><span></span></span>';
+          dd.querySelector(".status-chip span:last-child").textContent =
+            value === "needs-review" ? "Needs review" : value;
+        } else if (label === "Confidence") {
+          if (value === null) dd.textContent = "—";
+          else {
+            const percent = Math.round(value * 100);
+            const statusClass = value >= .9 ? "dot-good" : value >= .55 ? "dot-warn" : "dot-bad";
+            dd.innerHTML = '<span class="status-chip"><span class="dot ' + statusClass +
+              '"></span><span></span></span>';
+            dd.querySelector(".status-chip span:last-child").textContent = percent + "%";
+          }
+        } else if (label === "Caption hints" || label === "Example caption") {
+          dd.innerHTML = '<span class="check-value"></span>';
+          dd.querySelector(".check-value").textContent = value ? "✅ complete" : "❌ missing";
+        } else if (label === "Caption zones") {
           const row = document.createElement("span");
           row.className = "meta-row";
           const text = document.createElement("span");
