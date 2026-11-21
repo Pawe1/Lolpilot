@@ -416,6 +416,15 @@ export async function updateMeme(id, changes) {
     return image;
 }
 
+async function markAnalysisFailureUnlessComplete(id, message) {
+    const current = (await loadMemeIndex()).images.find((candidate) => candidate.id === id);
+    if (!current || current.analysisStatus !== "analyzing") return current;
+    return updateMeme(id, {
+        analysisStatus: "needs-review",
+        analysisError: String(message || "Curator finished without writing an analysis file.").slice(0, 240),
+    });
+}
+
 export async function setMemeGuidance(id, input) {
     const index = await loadMemeIndex();
     const image = index.images.find((candidate) => candidate.id === id);
@@ -643,16 +652,13 @@ export async function analyzeMeme(id, hint = "", boxesOnly = false) {
             try {
                 const consumed = await syncAnalysisResult(id);
                 if (!consumed) {
-                    await updateMeme(id, {
-                        analysisStatus: "needs-review",
-                        analysisError: error?.message || output || "Curator finished without writing an analysis file.",
-                    });
+                    await markAnalysisFailureUnlessComplete(
+                        id,
+                        error?.message || output || "Curator finished without writing an analysis file."
+                    );
                 }
             } catch (syncError) {
-                await updateMeme(id, {
-                    analysisStatus: "needs-review",
-                    analysisError: String(syncError?.message || syncError).slice(0, 240),
-                }).catch(() => {});
+                await markAnalysisFailureUnlessComplete(id, syncError?.message || syncError).catch(() => {});
             }
             setTimeout(drainAnalysisQueue, 500);
         });
@@ -707,10 +713,10 @@ export async function analyzeMemeExample(id, input) {
         try {
             const consumed = await syncAnalysisResult(id);
             if (!consumed) {
-                await updateMeme(id, {
-                    analysisStatus: "needs-review",
-                    analysisError: error?.message || `${stdout || ""}\n${stderr || ""}`.trim().slice(0, 240),
-                });
+                await markAnalysisFailureUnlessComplete(
+                    id,
+                    error?.message || `${stdout || ""}\n${stderr || ""}`.trim().slice(0, 240)
+                );
             }
         } finally {
             await unlink(referencePath).catch(() => {});
