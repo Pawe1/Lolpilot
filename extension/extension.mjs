@@ -190,8 +190,6 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .meme-detail img { display: block; width: 100%; max-height: 55vh; object-fit: contain; border-radius: 5px; background: #000; }
     .zone-preview { position: relative; }
     .zone-preview canvas { display:block; width:100%; max-height:55vh; object-fit:contain; background:#000; border-radius:5px; }
-    .zone-controls { display:flex; gap:8px; margin-top:8px; }
-    .zone-controls button { min-height:34px; }
     .meme-detail dl { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 7px 12px; }
     .meme-detail dt { color: var(--lp-muted); }
     .meme-detail dd { margin: 0; overflow-wrap: anywhere; }
@@ -206,6 +204,11 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .meta-row { display:flex; align-items:center; justify-content:space-between; gap:8px; grid-column:2; }
     .meta-add { min-height:28px; padding:4px 8px; border:1px solid var(--lp-border); border-radius:5px;
       color:inherit; background:var(--lp-control); font-size:12px; }
+    .meta-add.pending { position:relative; padding-left:20px; }
+    .meta-add.pending::before { content:""; position:absolute; left:7px; top:50%; width:7px; height:7px; margin-top:-3px;
+      border-radius:50%; background:#eab308; animation:examplePulse 1s ease-in-out infinite; }
+    .meta-add.failed::before { background:#dc2626; animation:none; }
+    @keyframes examplePulse { 50% { opacity:.25; transform:scale(.7); } }
     .example-menu { display:none; gap:6px; margin-top:6px; padding:6px; border:1px solid var(--lp-border);
       border-radius:5px; background:var(--lp-card); box-shadow:0 8px 24px #0002; }
     .example-menu.open { display:flex; }
@@ -391,10 +394,6 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     <div class="zone-preview">
       <img id="detailImage" alt="">
       <canvas id="detailCanvas" hidden></canvas>
-      <div class="zone-controls">
-        <button type="button" id="toggleZones">Show zones</button>
-        <button type="button" id="toggleExample" disabled>Use example</button>
-      </div>
     </div>
     <h2 id="detailTitle"></h2>
     <dl id="detailData"></dl>
@@ -496,6 +495,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       const response = await fetch("/api/memes/status", { cache: "no-store" });
       if (!response.ok) return;
       const state = await response.json();
+      if (exampleAnchor && state.signature === memeSignature) setExamplePending(false);
       if (memeSignature && state.signature !== memeSignature) {
         if (document.querySelector("#memeDetail")?.open) {
           pendingMemeRefresh = true;
@@ -706,8 +706,6 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   const duplicateMatch = document.querySelector("#duplicateMatch");
   const detailCanvas = document.querySelector("#detailCanvas");
   const detailImage = document.querySelector("#detailImage");
-  const toggleZones = document.querySelector("#toggleZones");
-  const toggleExample = document.querySelector("#toggleExample");
   let selectedMeme;
   let zonesVisible = false;
   let exampleVisible = false;
@@ -780,10 +778,6 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       selectedMeme = JSON.parse(button.dataset.meme);
       zonesVisible = false;
       exampleVisible = false;
-      toggleZones.textContent = "Show zones";
-      toggleZones.disabled = !(selectedMeme.captionZones || []).length;
-      toggleExample.textContent = "Use example";
-      toggleExample.disabled = !(selectedMeme.exampleCaptions || []).length;
       detailCanvas.hidden = true;
       detailImage.hidden = false;
       const image = detailImage;
@@ -843,6 +837,34 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
             document.querySelector("#exampleMenu").classList.toggle("open");
           });
           row.append(text, add);
+          if (label === "Caption zones" && (selectedMeme.captionZones || []).length) {
+            const show = document.createElement("button");
+            show.id = "toggleZones";
+            show.className = "meta-add";
+            show.textContent = "Show";
+            show.addEventListener("click", () => {
+              zonesVisible = !zonesVisible;
+              detailImage.hidden = zonesVisible || exampleVisible;
+              detailCanvas.hidden = !(zonesVisible || exampleVisible);
+              show.textContent = zonesVisible ? "Hide" : "Show";
+              renderDetailCanvas();
+            });
+            row.append(show);
+          }
+          if (label === "Example caption" && (selectedMeme.exampleCaptions || []).length) {
+            const use = document.createElement("button");
+            use.id = "toggleExample";
+            use.className = "meta-add";
+            use.textContent = "Show";
+            use.addEventListener("click", () => {
+              exampleVisible = !exampleVisible;
+              detailImage.hidden = zonesVisible || exampleVisible;
+              detailCanvas.hidden = !(zonesVisible || exampleVisible);
+              use.textContent = exampleVisible ? "Hide" : "Show";
+              renderDetailCanvas();
+            });
+            row.append(use);
+          }
           dd.append(row);
         } else {
           dd.textContent = value;
@@ -852,24 +874,16 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       memeDetail.showModal();
     });
   }
-  toggleZones.addEventListener("click", () => {
-    zonesVisible = !zonesVisible;
-    detailImage.hidden = zonesVisible || exampleVisible;
-    detailCanvas.hidden = !(zonesVisible || exampleVisible);
-    toggleZones.textContent = zonesVisible ? "Hide zones" : "Show zones";
-    renderDetailCanvas();
-  });
-  toggleExample.addEventListener("click", () => {
-    exampleVisible = !exampleVisible;
-    detailImage.hidden = zonesVisible || exampleVisible;
-    detailCanvas.hidden = !(zonesVisible || exampleVisible);
-    toggleExample.textContent = exampleVisible ? "Hide example" : "Use example";
-    renderDetailCanvas();
-  });
   document.querySelector("#closeMemeDetail").addEventListener("click", () => memeDetail.close());
   const exampleFile = document.querySelector("#exampleFile");
   const exampleMenu = document.querySelector("#exampleMenu");
   let exampleAnchor = null;
+  function setExamplePending(pending, failed = false) {
+    if (!exampleAnchor) return;
+    exampleAnchor.classList.toggle("pending", pending);
+    exampleAnchor.classList.toggle("failed", failed);
+    exampleAnchor.textContent = failed ? "Analysis failed" : pending ? "Analyzing" : "Add example";
+  }
   async function importExampleFile(file) {
     if (!selectedMeme) return;
     const dataUrl = await new Promise((resolve, reject) => {
@@ -884,8 +898,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       mimeType: file.type,
       dataUrl,
     });
+    setExamplePending(true);
     exampleMenu.classList.remove("open");
-    exampleAnchor = null;
   }
   document.querySelector("#exampleFromFile").addEventListener("click", () => exampleFile.click());
   exampleFile.addEventListener("change", async () => {
@@ -895,7 +909,9 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   document.querySelector("#exampleFromUrl").addEventListener("click", async () => {
     const url = prompt("Reference meme URL (PNG, JPEG, GIF, or WebP):");
     if (!url || !selectedMeme) return;
-    await post("/api/meme/analyze-example-url", { id: selectedMeme.id, url });
+    setExamplePending(true);
+    const response = await post("/api/meme/analyze-example-url", { id: selectedMeme.id, url });
+    if (!response) setExamplePending(false, true);
     exampleMenu.classList.remove("open");
   });
   document.querySelector("#exampleFromClipboard").addEventListener("click", async () => {
@@ -909,6 +925,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       "reference." + type.split("/")[1],
       { type }
     ));
+    setExamplePending(true);
     exampleMenu.classList.remove("open");
   });
   memeDetail.addEventListener("click", (event) => {
