@@ -1289,7 +1289,7 @@ async function startServer() {
     return { server, url: `http://127.0.0.1:${port}/` };
 }
 
-async function startPreviewServer(_instanceId, image, caption = "") {
+async function startPreviewServer(_instanceId, image, captionTexts = []) {
     const server = createServer(async (request, response) => {
         const url = new URL(request.url, "http://127.0.0.1");
         if (url.pathname === "/close" && request.method === "POST") {
@@ -1363,8 +1363,8 @@ async function startPreviewServer(_instanceId, image, caption = "") {
 <script>
 const canvas = document.querySelector("#preview");
 const ctx = canvas.getContext("2d");
-const topText = { value: ${JSON.stringify(String(caption || ""))} };
-const bottomText = { value: "" };
+const captionZones = ${JSON.stringify(image.captionZones || [])};
+const captionTexts = ${JSON.stringify(captionTexts)};
 const source = new Image();
 source.onload = render;
 source.src = "/image";
@@ -1379,29 +1379,43 @@ function wrapText(text, maxWidth) {
     else { lines.push(current); current = word; }
   }
   if (current) lines.push(current);
-  return lines.slice(0, 4);
+  return lines;
 }
 
-function drawCaption(text, fromBottom) {
+function fitCaption(text, zone) {
+  const width = zone.w * canvas.width;
+  const height = zone.h * canvas.height;
+  let fontSize = Math.max(18, Math.min(Math.round(canvas.width / 16), Math.round(height * .9)));
+  let lines = [];
+  do {
+    ctx.font = "900 " + fontSize + "px Impact, Haettenschweiler, Arial Black, sans-serif";
+    lines = wrapText(text, width * .92);
+    if (lines.length * fontSize * 1.05 <= height * .92) break;
+    fontSize -= 1;
+  } while (fontSize >= 12);
+  return { fontSize, lines };
+}
+
+function drawCaptionInZone(text, zone) {
   if (!text.trim()) return;
-  const fontSize = Math.max(24, Math.round(canvas.width / 13));
-  const maxWidth = canvas.width * .9;
+  const x = zone.x * canvas.width;
+  const y = zone.y * canvas.height;
+  const width = zone.w * canvas.width;
+  const height = zone.h * canvas.height;
+  const { fontSize, lines } = fitCaption(text, zone);
   const lineHeight = fontSize * 1.05;
   ctx.font = "900 " + fontSize + "px Impact, Haettenschweiler, Arial Black, sans-serif";
   ctx.textAlign = "center";
-  ctx.textBaseline = "alphabetic";
+  ctx.textBaseline = "top";
   ctx.lineJoin = "round";
   ctx.lineWidth = Math.max(5, Math.round(fontSize / 7));
   ctx.strokeStyle = "#000";
   ctx.fillStyle = "#fff";
-  const lines = wrapText(text, maxWidth);
-  const startY = fromBottom
-    ? canvas.height - 16 - (lines.length - 1) * lineHeight
-    : 16 + fontSize;
+  const startY = y + Math.max(0, (height - lines.length * lineHeight) / 2);
   lines.forEach((line, index) => {
     const y = startY + index * lineHeight;
-    ctx.strokeText(line, canvas.width / 2, y);
-    ctx.fillText(line, canvas.width / 2, y);
+    ctx.strokeText(line, x + width / 2, y, width);
+    ctx.fillText(line, x + width / 2, y, width);
   });
 }
 
@@ -1410,8 +1424,11 @@ function render() {
   canvas.width = source.naturalWidth;
   canvas.height = source.naturalHeight;
   ctx.drawImage(source, 0, 0);
-  drawCaption(topText.value, false);
-  drawCaption(bottomText.value, true);
+  if (captionZones.length) {
+    captionZones.forEach((zone, index) => drawCaptionInZone(String(captionTexts[index] || ""), zone));
+  } else if (captionTexts.length) {
+    drawCaptionInZone(captionTexts[0], { x:.03, y:.02, w:.94, h:.18 });
+  }
 }
 
 async function rate(value) {
@@ -1528,7 +1545,15 @@ const session = await joinSession({
                 type: "object",
                 properties: {
                     memeId: { type: "string" },
-                    caption: { type: "string" },
+                    caption: {
+                        type: "string",
+                        description: "One caption, or captions separated by a newline or | in caption-zone order.",
+                    },
+                    captions: {
+                        type: "array",
+                        description: "Caption text for each saved caption zone, in reading order.",
+                        items: { type: "string" },
+                    },
                 },
                 required: ["memeId"],
             },
@@ -1545,7 +1570,9 @@ const session = await joinSession({
                 const entry = await startPreviewServer(
                     ctx.instanceId,
                     image,
-                    String(ctx.input.caption || "")
+                    Array.isArray(ctx.input.captions)
+                        ? ctx.input.captions.map((value) => String(value))
+                        : String(ctx.input.caption || "").split(/\r?\n|\s*[|]\s*/).map((value) => value.trim()).filter(Boolean)
                 );
                 previewServers.set(ctx.instanceId, entry);
                 return { title: image.template || "Lolpilot Meme", url: entry.url };
