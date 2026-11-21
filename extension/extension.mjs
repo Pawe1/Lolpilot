@@ -1017,7 +1017,21 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   reanalyzeIdentity.addEventListener("click", () => {
     const hint = galleryIdentityHint.value.trim();
     if (!selectedMeme || !hint) return;
-    run(() => post("/api/meme/analyze", { id: selectedMeme.id, hint }));
+    const kymMatch = hint.match(/https?:\/\/(?:www\.)?knowyourmeme\.com\/[^\s"'<>]+/i);
+    const knowYourMemeUrl = kymMatch?.[0] || "";
+    run(async () => {
+      if (knowYourMemeUrl) {
+        await post("/api/meme/know-your-meme", { id: selectedMeme.id, url: knowYourMemeUrl });
+        document.querySelector("#knowYourMemeUrl").value = knowYourMemeUrl;
+        const link = document.querySelector("#openKnowYourMeme");
+        link.href = knowYourMemeUrl;
+        link.hidden = false;
+      }
+      return post("/api/meme/analyze", {
+        id: selectedMeme.id,
+        hint: hint.replace(knowYourMemeUrl, "").replace(/\s+/g, " ").trim(),
+      });
+    });
   });
   deleteMemeButton.addEventListener("click", () =>
     selectedMeme && run(() => post("/api/meme/delete", { id: selectedMeme.id })));
