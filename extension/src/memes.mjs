@@ -206,6 +206,59 @@ export async function addMeme({
     return image;
 }
 
+export async function replaceMemeImage(id, {
+    fileName, mimeType, dataUrl
+}) {
+    if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mimeType)) {
+        throw new CanvasError("invalid_image_type", "Use PNG, JPEG, GIF, or WebP.");
+    }
+    const match = String(dataUrl || "").match(/^data:[^;]+;base64,(.+)$/);
+    if (!match) throw new CanvasError("invalid_image", "The selected image could not be read.");
+    const bytes = Buffer.from(match[1], "base64");
+    if (!bytes.length || bytes.length > 8 * 1024 * 1024) {
+        throw new CanvasError("invalid_image_size", "Image size must be between 1 byte and 8 MiB.");
+    }
+    const index = await loadMemeIndex();
+    const image = index.images.find((candidate) => candidate.id === id);
+    if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    if (hash === image.hash) return image;
+    const duplicate = index.images.find((candidate) => candidate.id !== id && candidate.hash === hash);
+    if (duplicate) {
+        throw new CanvasError("image_already_exists", `This image is already stored as ${duplicate.template || duplicate.file}.`);
+    }
+    const extension = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" }[mimeType];
+    const dimensions = imageDimensions(mimeType, bytes);
+    const safeBase = String(fileName || image.template || "meme").replace(/\.[^.]+$/, "")
+        .replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "meme";
+    const nextFile = `${safeBase}-${id}-${hash.slice(0, 8)}.${extension}`;
+    const previousFile = image.file;
+    const archivedImage = {
+        file: previousFile,
+        mimeType: image.mimeType,
+        hash: image.hash,
+        width: image.width,
+        height: image.height,
+        byteSize: image.byteSize,
+        archivedAt: new Date().toISOString(),
+    };
+    await mkdir(IMAGE_CACHE_DIR, { recursive: true });
+    await writeFile(`${IMAGE_CACHE_DIR}\\${nextFile}`, bytes);
+    Object.assign(image, {
+        file: nextFile,
+        mimeType,
+        hash,
+        width: dimensions.width,
+        height: dimensions.height,
+        byteSize: bytes.length,
+        perceptualHash: "",
+        imageHistory: [...(image.imageHistory || []), archivedImage],
+        updatedAt: new Date().toISOString(),
+    });
+    await saveMemeIndex(index);
+    return image;
+}
+
 export function isPrivateAddress(address) {
     if (address === "::1" || address === "::") return true;
     if (address.includes(":")) {
@@ -375,16 +428,22 @@ export async function syncAnalysisResults() {
 
 export async function syncAnalysisResult(id) {
     const path = `${ANALYSIS_DIR}\\${id}.json`;
+    let resultId = id;
     try {
         const raw = await readFile(path, "utf8");
         const result = JSON.parse(raw.replace(/^\uFEFF/, ""));
-        if (result.id !== id) throw new Error("Analysis result id does not match the queued meme.");
-        await storeMemeAnalysis(id, JSON.stringify(result));
+        resultId = String(result.id || "").trim();
+        if (!resultId) throw new Error("Analysis result id is missing.");
+        const index = await loadMemeIndex();
+        if (!index.images.some((image) => image.id === resultId)) {
+            throw new Error("Analysis result id does not match a known meme.");
+        }
+        await storeMemeAnalysis(resultId, JSON.stringify(result));
         await unlink(path);
         return true;
     } catch (error) {
         if (error?.code === "ENOENT") return false;
-        await updateMeme(id, {
+        await updateMeme(resultId, {
             analysisStatus: "needs-review",
             analysisError: String(error?.message || error).slice(0, 240),
         }).catch(() => {});
@@ -420,8 +479,22 @@ export async function recoverAnalysisState() {
             changed = true;
         }
         if (image.analysisStatus === "analyzing") {
-            image.analysisStatus = "pending";
-            image.analysisError = "Recovered after extension reload.";
+            if (image.template && Number(image.confidence || 0) >= 0.55) {
+                image.analysisStatus = image.duplicateOf ? "duplicate" : "analyzed";
+                image.analysisError = "";
+            } else {
+                image.analysisStatus = "pending";
+                image.analysisError = "Recovered after extension reload.";
+            }
+            changed = true;
+        } else if (
+            image.analysisStatus === "pending"
+            && image.analysisError === "Recovered after extension reload."
+            && image.template
+            && Number(image.confidence || 0) >= 0.55
+        ) {
+            image.analysisStatus = image.duplicateOf ? "duplicate" : "analyzed";
+            image.analysisError = "";
             changed = true;
         } else if (
             image.analysisStatus === "needs-review"
@@ -655,15 +728,28 @@ export function parseAnalysisContent(content) {
 
 export async function storeMemeAnalysis(id, content) {
     const result = parseAnalysisContent(content);
-    const confidenceValue = typeof result?.confidence === "object"
-        ? result.confidence.overall ?? result.confidence.targetTemplate
-        : result?.confidence;
-    const confidence = Number(confidenceValue);
-    if (!result || !Number.isFinite(confidence)) {
-        throw new Error("The analysis result did not contain a valid confidence value.");
+    if (!result) {
+        throw new Error("The analysis result did not contain valid JSON.");
     }
     const existing = (await loadMemeIndex()).images.find((image) => image.id === id);
     if (!existing) throw new CanvasError("meme_not_found", "Meme not found.");
+    const referenceAnalysis = String(existing.analysisHint || "").startsWith("Reference image supplied at ");
+    const confidenceValues = typeof result.confidence === "object" && result.confidence
+        ? Object.values(result.confidence).map(Number).filter(Number.isFinite)
+        : [Number(result.confidence)];
+    const preferredConfidence = typeof result.confidence === "object" && result.confidence
+        ? Number(result.confidence.overall ?? result.confidence.targetTemplate)
+        : Number(result.confidence);
+    const confidence = Number.isFinite(preferredConfidence)
+        ? preferredConfidence
+        : confidenceValues.length
+            ? confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length
+            : referenceAnalysis && Number.isFinite(Number(existing.confidence))
+                ? Number(existing.confidence)
+                : Number.NaN;
+    if (!Number.isFinite(confidence)) {
+        throw new Error("The analysis result did not contain a valid confidence value.");
+    }
     const preserveExistingZones = String(existing.analysisHint || "").startsWith("Reference image supplied at ")
         && Array.isArray(existing.captionZones) && existing.captionZones.length > 0;
     const captionZonesOnly = existing.analysisHint === "Caption zone analysis only";

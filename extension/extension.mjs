@@ -9,7 +9,7 @@ import {
 } from "./src/profiles.mjs";
 import {
     addMeme, addMemeFromUrl, analyzeMeme, analyzeMemeExample, analyzeMemeExampleFromUrl, analyzePendingMemes, deleteMeme, findMemes, keepMeme,
-    LAST_INDEX_RECOVERY, loadMemeIndex, recoverAnalysisState, replaceMeme, saveMemeIndex, setKnowYourMemeUrl, syncAnalysisResults, backupMemeIndex,
+    LAST_INDEX_RECOVERY, loadMemeIndex, recoverAnalysisState, replaceMeme, replaceMemeImage, saveMemeIndex, setKnowYourMemeUrl, syncAnalysisResults, backupMemeIndex,
 } from "./src/memes.mjs";
 
 const servers = new Map();
@@ -34,7 +34,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         <span class="status-dot status-${escapeHtml(image.analysisStatus)}"
           title="${escapeHtml(image.analysisStatus === "duplicate" ? "Duplicate decision" : image.analysisStatus)}"
           aria-label="${escapeHtml(image.analysisStatus === "duplicate" ? "Duplicate decision" : image.analysisStatus)}"></span>
-        <img src="/api/meme/image?id=${encodeURIComponent(image.id)}" alt="${escapeHtml(image.template || image.file)}">
+        <img src="/api/meme/image?id=${encodeURIComponent(image.id)}&v=${encodeURIComponent(image.updatedAt || image.hash)}" alt="${escapeHtml(image.template || image.file)}">
         <span class="meme-name">${escapeHtml(image.template || "Awaiting analysis")}</span>
       </button>
     `).join("");
@@ -226,7 +226,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       border-radius:5px; background:var(--lp-card); box-shadow:0 8px 24px #0002; }
     .example-menu.open { display:flex; }
     .example-menu button { min-height:30px; padding:4px 8px; }
-    #exampleFile { display:none; }
+    #exampleFile, #upgradeImageFile { display:none; }
     dialog { width: min(420px, calc(100vw - 32px)); border: 1px solid var(--lp-border); border-radius: 7px;
       color: inherit; background: var(--lp-card); box-shadow: 0 18px 60px #0008; }
     dialog::backdrop { background: #0009; backdrop-filter: blur(2px); }
@@ -417,6 +417,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <p id="duplicateDimensions" class="fine"></p>
     </div>
     <input id="exampleFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+    <input id="upgradeImageFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
     <div id="exampleMenu" class="example-menu">
       <button id="exampleFromFile">File</button>
       <button id="exampleFromUrl">URL</button>
@@ -517,7 +518,14 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       const selectedState = state.statuses?.find((item) => item.id === selectedMeme?.id);
       if (selectedState && selectedMeme) {
         selectedMeme.analysisStatus = selectedState.status;
-        if (exampleAnchor) setExamplePending(selectedState.status === "analyzing");
+        selectedMeme.analysisError = selectedState.error || "";
+        if (exampleAnchor) {
+          const failed = selectedState.status === "needs-review" && Boolean(selectedState.error);
+          setExamplePending(selectedState.status === "analyzing", failed);
+        }
+        if (selectedState.status === "needs-review" && selectedState.error) {
+          document.querySelector("#memeStatus").textContent = selectedState.error;
+        }
       }
       if (memeSignature && state.signature !== memeSignature) {
         if (document.querySelector("#memeDetail")?.open) {
@@ -852,6 +860,12 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         ["Tone", (selectedMeme.tone || []).join(", ") || "—"],
         ["Tags", (selectedMeme.tags || []).join(", ") || "—"],
         ["Description", selectedMeme.visualDescription || "—"],
+        ["Image", {
+          width: selectedMeme.width,
+          height: selectedMeme.height,
+          mimeType: selectedMeme.mimeType,
+          byteSize: selectedMeme.byteSize,
+        }],
         ["Source", selectedMeme.source || "local-import"],
       ];
       document.querySelector("#detailData").replaceChildren(...rows.flatMap(([label, value]) => {
@@ -879,6 +893,27 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
               '"></span><span></span></span>';
             dd.querySelector(".status-chip span:last-child").textContent = percent + "%";
           }
+        } else if (label === "Image") {
+          const row = document.createElement("span");
+          row.className = "meta-row";
+          const info = document.createElement("span");
+          info.id = "imageInfo";
+          const width = Number(value.width);
+          const height = Number(value.height);
+          const size = Number(value.byteSize);
+          const sizeLabel = Number.isFinite(size) && size >= 1024
+            ? (size >= 1024 * 1024
+              ? (size / 1024 / 1024).toFixed(1) + " MiB"
+              : Math.round(size / 1024) + " KiB")
+            : Number.isFinite(size) ? size + " B" : "size unknown";
+          info.textContent = (width && height ? width + "×" + height + " px · " : "") + sizeLabel;
+          const upgrade = document.createElement("button");
+          upgrade.id = "upgradeImage";
+          upgrade.className = "meta-add";
+          upgrade.textContent = "Upgrade image";
+          upgrade.addEventListener("click", () => document.querySelector("#upgradeImageFile").click());
+          row.append(info, upgrade);
+          dd.append(row);
         } else if (label === "Caption hints" || label === "Example caption") {
           const row = document.createElement("span");
           row.className = "meta-row";
@@ -989,6 +1024,48 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   const exampleFile = document.querySelector("#exampleFile");
   const exampleMenu = document.querySelector("#exampleMenu");
   let exampleAnchor = null;
+  const upgradeImageFile = document.querySelector("#upgradeImageFile");
+  upgradeImageFile.addEventListener("change", async () => {
+    const file = upgradeImageFile.files[0];
+    upgradeImageFile.value = "";
+    if (!file || !selectedMeme) return;
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("Could not read the replacement image."));
+      reader.readAsDataURL(file);
+    });
+    try {
+      const updated = await post("/api/meme/replace-image", {
+        id: selectedMeme.id,
+        fileName: file.name,
+        mimeType: file.type,
+        dataUrl,
+      });
+      selectedMeme = updated;
+      detailImage.src = "/api/meme/image?id=" + encodeURIComponent(updated.id)
+        + "&v=" + encodeURIComponent(updated.updatedAt);
+      const card = document.querySelector('[data-meme-id="' + updated.id + '"]');
+      if (card) {
+        card.dataset.meme = JSON.stringify(updated);
+        card.querySelector("img").src = detailImage.src;
+      }
+      const imageInfo = document.querySelector("#imageInfo");
+      if (imageInfo) {
+        const size = Number(updated.byteSize);
+        const sizeLabel = Number.isFinite(size) && size >= 1024
+          ? (size >= 1024 * 1024
+            ? (size / 1024 / 1024).toFixed(1) + " MiB"
+            : Math.round(size / 1024) + " KiB")
+          : Number.isFinite(size) ? size + " B" : "size unknown";
+        imageInfo.textContent = (updated.width && updated.height
+          ? updated.width + "×" + updated.height + " px · " : "") + sizeLabel;
+      }
+      document.querySelector("#memeStatus").textContent = "Higher-quality image saved.";
+    } catch (error) {
+      document.querySelector("#memeStatus").textContent = error.message;
+    }
+  });
   function setExamplePending(pending, failed = false) {
     if (!exampleAnchor) return;
     exampleAnchor.classList.toggle("pending", pending);
@@ -1256,6 +1333,15 @@ async function startServer() {
                 sendJson(response, await analyzeMemeExampleFromUrl(body.id, body.url));
                 return;
             }
+            if (request.method === "POST" && url.pathname === "/api/meme/replace-image") {
+                const body = await readBody(request);
+                sendJson(response, await replaceMemeImage(body.id, {
+                    fileName: body.fileName,
+                    mimeType: body.mimeType,
+                    dataUrl: body.dataUrl,
+                }));
+                return;
+            }
             if (request.method === "GET" && url.pathname === "/api/meme") {
                 const id = url.searchParams.get("id");
                 const image = (await loadMemeIndex()).images.find((candidate) => candidate.id === id);
@@ -1272,6 +1358,7 @@ async function startServer() {
                     statuses: index.images.map((image) => ({
                         id: image.id,
                         status: image.analysisStatus,
+                        error: image.analysisError || "",
                     })),
                     signature: index.images
                         .map((image) => `${image.id}:${image.analysisStatus}:${image.updatedAt || ""}`)
