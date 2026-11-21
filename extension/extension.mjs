@@ -191,6 +191,9 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .meme-detail dl { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 7px 12px; }
     .meme-detail dt { color: var(--lp-muted); }
     .meme-detail dd { margin: 0; overflow-wrap: anywhere; }
+    .duplicate-match { margin: 14px 0; padding: 12px; border: 1px solid #eab308; border-radius: 5px; }
+    .duplicate-match img { width: 100%; max-height: 180px; object-fit: contain; margin: 8px 0; background:#000; }
+    .duplicate-match p { margin: 3px 0; }
     .identity-hint { display:grid; gap:8px; margin-top:12px; }
     .identity-hint textarea { min-height:64px; resize:vertical; border:1px solid var(--lp-border); border-radius:5px;
       padding:9px 10px; background:var(--lp-control); color:inherit; font:14px var(--font-sans,Segoe UI,sans-serif); }
@@ -202,8 +205,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     dialog h2 { margin: 0 0 8px; font-size: 18px; }
     dialog p { color: var(--lp-muted); }
     .dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-    .meme-detail .dialog-actions { justify-content: space-between; }
-    .meme-detail .dialog-actions #deleteMeme { margin-right: auto; order: -1; }
+    .meme-detail .dialog-actions { justify-content: flex-end; }
+    .meme-detail .dialog-actions #deleteMeme { margin-right: auto; }
     .dialog-actions button { min-width: 90px; }
     button:disabled { cursor: not-allowed; opacity: .55; }
     @media (max-width: 340px) {
@@ -376,15 +379,21 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     <img id="detailImage" alt="">
     <h2 id="detailTitle"></h2>
     <dl id="detailData"></dl>
+    <div id="duplicateMatch" class="duplicate-match" hidden>
+      <h3>Possible duplicate</h3>
+      <img id="duplicateImage" alt="">
+      <p id="duplicateTitle"></p>
+      <p id="duplicateDimensions" class="fine"></p>
+    </div>
     <div class="identity-hint">
       <button id="showIdentityHint" type="button">Suggest identity</button>
       <textarea id="galleryIdentityHint" hidden placeholder="Suggested template identity or context…" autofocus></textarea>
       <button id="reanalyzeIdentity" type="button" hidden disabled>Send suggestion & re-analyze</button>
     </div>
     <div class="dialog-actions">
-      <button type="button" id="closeMemeDetail">Close</button>
-      <button type="button" id="replaceMeme" class="neutral" hidden>Replace existing</button>
       <button type="button" id="deleteMeme" class="meme-delete">Delete</button>
+      <button type="button" id="replaceMeme" class="neutral" hidden>Replace existing</button>
+      <button type="button" id="closeMemeDetail">Close</button>
     </div>
   </dialog>
 
@@ -669,6 +678,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   const memeDetail = document.querySelector("#memeDetail");
   const deleteMemeButton = document.querySelector("#deleteMeme");
   const replaceMemeButton = document.querySelector("#replaceMeme");
+  const duplicateMatch = document.querySelector("#duplicateMatch");
   let selectedMeme;
   memeDetail.addEventListener("close", () => {
     if (pendingMemeRefresh) {
@@ -690,6 +700,21 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       document.querySelector("#detailTitle").textContent = selectedMeme.template || "Awaiting analysis";
       replaceMemeButton.hidden = !selectedMeme.duplicateOf;
       replaceMemeButton.textContent = selectedMeme.replacementSuggested ? "Replace existing" : "Keep both";
+      duplicateMatch.hidden = !selectedMeme.duplicateOf;
+      if (selectedMeme.duplicateOf) {
+        const candidate = [...document.querySelectorAll("[data-meme-id]")]
+          .find((node) => node.dataset.memeId === selectedMeme.duplicateOf);
+        const duplicate = candidate ? JSON.parse(candidate.dataset.meme) : null;
+        if (duplicate) {
+          document.querySelector("#duplicateImage").src =
+            "/api/meme/image?id=" + encodeURIComponent(duplicate.id);
+          document.querySelector("#duplicateImage").alt = duplicate.template || duplicate.file;
+          document.querySelector("#duplicateTitle").textContent =
+            duplicate.template || duplicate.file;
+          document.querySelector("#duplicateDimensions").textContent =
+            (duplicate.width || "?") + "×" + (duplicate.height || "?") + " px · same template decision";
+        }
+      }
       const rows = [
         ["Status", selectedMeme.duplicateOf ? "Duplicate decision" : selectedMeme.analysisStatus],
         ["Confidence", selectedMeme.confidence ? Math.round(selectedMeme.confidence * 100) + "%" : "—"],
