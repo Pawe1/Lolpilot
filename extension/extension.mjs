@@ -1409,9 +1409,17 @@ const canvas = document.querySelector("#preview");
 const ctx = canvas.getContext("2d");
 const captionZones = ${JSON.stringify(image.captionZones || [])};
 const captionTexts = ${JSON.stringify(captionTexts)};
+const renderScale = 2;
 const source = new Image();
 source.onload = render;
 source.src = "/image";
+
+function captionFont(fontSize) {
+  const fontFamily = fontSize < canvas.width / 36
+    ? "Arial, sans-serif"
+    : "Impact, Haettenschweiler, Arial Black, sans-serif";
+  return "900 " + fontSize + "px " + fontFamily;
+}
 
 function wrapText(text, maxWidth) {
   const words = text.trim().toUpperCase().split(/\\s+/).filter(Boolean);
@@ -1432,7 +1440,7 @@ function fitCaption(text, zone) {
   let fontSize = Math.max(18, Math.min(Math.round(canvas.width / 14), Math.round(height * .72)));
   let lines = [];
   do {
-    ctx.font = "900 " + fontSize + "px Impact, Haettenschweiler, Arial Black, sans-serif";
+    ctx.font = captionFont(fontSize);
     lines = wrapText(text, width * .92);
     if (lines.length <= 2 && lines.length * fontSize * 1.05 <= height * .9) break;
     fontSize -= 1;
@@ -1459,7 +1467,7 @@ function drawCaptionInZone(text, savedZone) {
   const height = zone.h * canvas.height;
   const { fontSize, lines } = fitCaption(text, zone);
   const lineHeight = fontSize * 1.05;
-  ctx.font = "900 " + fontSize + "px Impact, Haettenschweiler, Arial Black, sans-serif";
+  ctx.font = captionFont(fontSize);
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   ctx.lineJoin = "round";
@@ -1476,9 +1484,10 @@ function drawCaptionInZone(text, savedZone) {
 
 function render() {
   if (!source.complete || !source.naturalWidth) return;
-  canvas.width = source.naturalWidth;
-  canvas.height = source.naturalHeight;
-  ctx.drawImage(source, 0, 0);
+  canvas.width = source.naturalWidth * renderScale;
+  canvas.height = source.naturalHeight * renderScale;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
   if (captionZones.length) {
     captionZones.forEach((zone, index) => drawCaptionInZone(String(captionTexts[index] || ""), zone));
   } else if (captionTexts.length) {
