@@ -416,6 +416,24 @@ export async function updateMeme(id, changes) {
     return image;
 }
 
+export async function setMemeGuidance(id, input) {
+    const index = await loadMemeIndex();
+    const image = index.images.find((candidate) => candidate.id === id);
+    if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+    const guidance = String(input.guidance || "").trim().slice(0, 2000);
+    if (guidance) image.usageHints = guidance;
+    else image.usageHints = "";
+    image.captionRules = [...new Set([
+        ...(image.captionRules || []).filter((rule) =>
+            !String(rule).startsWith("User usage guidance:")
+        ),
+        ...(guidance ? [`User usage guidance: ${guidance}`] : []),
+    ])].slice(-12);
+    image.updatedAt = new Date().toISOString();
+    await saveMemeIndex(index);
+    return image;
+}
+
 export async function syncAnalysisResults() {
     await mkdir(ANALYSIS_DIR, { recursive: true });
     let changed = 0;

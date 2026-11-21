@@ -9,7 +9,7 @@ import {
 } from "./src/profiles.mjs";
 import {
     addMeme, addMemeFromUrl, analyzeMeme, analyzeMemeExample, analyzeMemeExampleFromUrl, analyzePendingMemes, deleteMeme, findMemes, keepMeme,
-    LAST_INDEX_RECOVERY, loadMemeIndex, recoverAnalysisState, replaceMeme, replaceMemeImage, saveMemeIndex, setKnowYourMemeUrl, syncAnalysisResults, backupMemeIndex,
+    LAST_INDEX_RECOVERY, loadMemeIndex, recoverAnalysisState, replaceMeme, replaceMemeImage, saveMemeIndex, setKnowYourMemeUrl, setMemeGuidance, syncAnalysisResults, backupMemeIndex,
 } from "./src/memes.mjs";
 
 const servers = new Map();
@@ -428,6 +428,11 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <textarea id="galleryIdentityHint" hidden placeholder="Suggested template identity or context…" autofocus></textarea>
       <button id="reanalyzeIdentity" type="button" hidden disabled>Send suggestion & re-analyze</button>
     </div>
+    <div class="identity-hint">
+      <button id="showUsageGuidance" type="button">Add usage guidance</button>
+      <textarea id="galleryUsageGuidance" hidden maxlength="2000" placeholder="When to use it, when not to use it, tone, limits…"></textarea>
+      <button id="saveUsageGuidance" type="button" hidden disabled>Save guidance</button>
+    </div>
     <div class="kym-row">
       <label for="knowYourMemeUrl">KnowYourMeme</label>
       <input id="knowYourMemeUrl" type="url" placeholder="https://knowyourmeme.com/memes/...">
@@ -822,6 +827,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       kymInput.value = selectedMeme.knowYourMemeUrl || "";
       kymLink.hidden = !selectedMeme.knowYourMemeUrl;
       if (selectedMeme.knowYourMemeUrl) kymLink.href = selectedMeme.knowYourMemeUrl;
+      document.querySelector("#galleryUsageGuidance").value = selectedMeme.usageHints || "";
       zonesVisible = false;
       exampleVisible = false;
       detailCanvas.hidden = true;
@@ -1154,6 +1160,30 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       });
     });
   });
+  const galleryUsageGuidance = document.querySelector("#galleryUsageGuidance");
+  const saveUsageGuidance = document.querySelector("#saveUsageGuidance");
+  document.querySelector("#showUsageGuidance").addEventListener("click", () => {
+    galleryUsageGuidance.hidden = false;
+    saveUsageGuidance.hidden = false;
+    document.querySelector("#showUsageGuidance").hidden = true;
+    galleryUsageGuidance.focus();
+  });
+  galleryUsageGuidance.addEventListener("input", () => {
+    saveUsageGuidance.disabled = !galleryUsageGuidance.value.trim();
+  });
+  saveUsageGuidance.addEventListener("click", () => {
+    if (!selectedMeme) return;
+    run(async () => {
+      const updated = await post("/api/meme/guidance", {
+        id: selectedMeme.id,
+        guidance: galleryUsageGuidance.value,
+      });
+      selectedMeme = updated;
+      saveUsageGuidance.textContent = "Saved";
+      setTimeout(() => saveUsageGuidance.textContent = "Save guidance", 1500);
+      return updated;
+    });
+  });
   deleteMemeButton.addEventListener("click", () =>
     selectedMeme && run(() => post("/api/meme/delete", { id: selectedMeme.id })));
   replaceMemeButton.addEventListener("click", () => {
@@ -1340,6 +1370,11 @@ async function startServer() {
                     mimeType: body.mimeType,
                     dataUrl: body.dataUrl,
                 }));
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/api/meme/guidance") {
+                const body = await readBody(request);
+                sendJson(response, await setMemeGuidance(body.id, body));
                 return;
             }
             if (request.method === "GET" && url.pathname === "/api/meme") {
@@ -1795,6 +1830,7 @@ const session = await joinSession({
                     if (meme.analysisStatus === "analyzed") {
                         context.push(
                             `A native image attachment matching this topic is available: template="${meme.template}"; tags=${meme.tags.join(",")}.`,
+                            meme.usageHints ? `Usage guidance: ${meme.usageHints}` : "",
                             "Image output is currently disabled because this host cannot publish extension images inside assistant responses. Do not mention or attach the image."
                         );
                     } else {
