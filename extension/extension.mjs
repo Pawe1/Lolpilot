@@ -356,7 +356,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <select id="statusFilter">
         <option value="all">All</option>
         <option value="analyzed">🟢 Analyzed</option>
-        <option value="needs-review">Needs review</option>
+        <option value="needs-review">❓ Needs review</option>
         <option value="duplicate">🟡 Duplicate decision</option>
         <option value="analyzing">🔵 Analyzing</option>
         <option value="pending">🟠 Pending</option>
