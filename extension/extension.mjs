@@ -188,6 +188,10 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .filter-count span { color: var(--lp-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
     .meme-detail { max-width: min(620px, calc(100vw - 28px)); }
     .meme-detail img { display: block; width: 100%; max-height: 55vh; object-fit: contain; border-radius: 5px; background: #000; }
+    .zone-preview { position: relative; }
+    .zone-preview canvas { display:block; width:100%; max-height:55vh; object-fit:contain; background:#000; border-radius:5px; }
+    .zone-controls { display:flex; gap:8px; margin-top:8px; }
+    .zone-controls button { min-height:34px; }
     .meme-detail dl { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 7px 12px; }
     .meme-detail dt { color: var(--lp-muted); }
     .meme-detail dd { margin: 0; overflow-wrap: anywhere; }
@@ -383,7 +387,14 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   </div>
 
   <dialog id="memeDetail" class="meme-detail">
-    <img id="detailImage" alt="">
+    <div class="zone-preview">
+      <img id="detailImage" alt="">
+      <canvas id="detailCanvas" hidden></canvas>
+      <div class="zone-controls">
+        <button type="button" id="toggleZones">Show zones</button>
+        <button type="button" id="toggleExample" disabled>Use example</button>
+      </div>
+    </div>
     <h2 id="detailTitle"></h2>
     <dl id="detailData"></dl>
     <div id="duplicateMatch" class="duplicate-match" hidden>
@@ -692,7 +703,66 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   const deleteMemeButton = document.querySelector("#deleteMeme");
   const replaceMemeButton = document.querySelector("#replaceMeme");
   const duplicateMatch = document.querySelector("#duplicateMatch");
+  const detailCanvas = document.querySelector("#detailCanvas");
+  const detailImage = document.querySelector("#detailImage");
+  const toggleZones = document.querySelector("#toggleZones");
+  const toggleExample = document.querySelector("#toggleExample");
   let selectedMeme;
+  let zonesVisible = false;
+  let exampleVisible = false;
+
+  function renderDetailCanvas() {
+    if (!selectedMeme) return;
+    const source = new Image();
+    source.onload = () => {
+      detailCanvas.width = source.naturalWidth;
+      detailCanvas.height = source.naturalHeight;
+      const context = detailCanvas.getContext("2d");
+      context.drawImage(source, 0, 0);
+      for (const [index, zone] of (selectedMeme.captionZones || []).entries()) {
+        if (!zonesVisible) continue;
+        const x = zone.x * detailCanvas.width;
+        const y = zone.y * detailCanvas.height;
+        const w = zone.w * detailCanvas.width;
+        const h = zone.h * detailCanvas.height;
+        context.save();
+        context.setLineDash([10, 8]);
+        context.lineWidth = Math.max(2, detailCanvas.width / 400);
+        context.strokeStyle = "#60a5fa";
+        context.strokeRect(x, y, w, h);
+        context.setLineDash([]);
+        context.fillStyle = "rgba(15,23,42,.78)";
+        context.fillRect(x, y, Math.min(w, 190), 26);
+        context.fillStyle = "#fff";
+        context.font = "700 18px Segoe UI, sans-serif";
+        context.fillText(zone.role || ("Zone " + (index + 1)), x + 7, y + 19);
+        context.restore();
+      }
+      if (exampleVisible) {
+        const example = selectedMeme.exampleCaptions?.[0];
+        const texts = example?.texts || [];
+        (selectedMeme.captionZones || []).forEach((zone, index) => {
+          const text = texts[index];
+          if (!text) return;
+          const x = (zone.x + zone.w / 2) * detailCanvas.width;
+          const y = (zone.y + zone.h / 2) * detailCanvas.height;
+          const fontSize = Math.max(24, Math.round(detailCanvas.width / 13));
+          context.save();
+          context.font = "900 " + fontSize + "px Impact, Arial Black, sans-serif";
+          context.textAlign = "center";
+          context.textBaseline = "middle";
+          context.lineJoin = "round";
+          context.lineWidth = Math.max(5, Math.round(fontSize / 7));
+          context.strokeStyle = "#000";
+          context.fillStyle = "#fff";
+          context.strokeText(String(text).toUpperCase(), x, y, zone.w * detailCanvas.width);
+          context.fillText(String(text).toUpperCase(), x, y, zone.w * detailCanvas.width);
+          context.restore();
+        });
+      }
+    };
+    source.src = "/api/meme/image?id=" + encodeURIComponent(selectedMeme.id);
+  }
   memeDetail.addEventListener("close", () => {
     if (pendingMemeRefresh) {
       pendingMemeRefresh = false;
@@ -707,7 +777,15 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   for (const button of document.querySelectorAll("[data-meme-id]")) {
     button.addEventListener("click", () => {
       selectedMeme = JSON.parse(button.dataset.meme);
-      const image = document.querySelector("#detailImage");
+      zonesVisible = false;
+      exampleVisible = false;
+      toggleZones.textContent = "Show zones";
+      toggleZones.disabled = !(selectedMeme.captionZones || []).length;
+      toggleExample.textContent = "Use example";
+      toggleExample.disabled = !(selectedMeme.exampleCaptions || []).length;
+      detailCanvas.hidden = true;
+      detailImage.hidden = false;
+      const image = detailImage;
       image.src = "/api/meme/image?id=" + encodeURIComponent(selectedMeme.id);
       image.alt = selectedMeme.template || selectedMeme.file;
       document.querySelector("#detailTitle").textContent = selectedMeme.template || "Awaiting analysis";
@@ -771,6 +849,20 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       memeDetail.showModal();
     });
   }
+  toggleZones.addEventListener("click", () => {
+    zonesVisible = !zonesVisible;
+    detailImage.hidden = zonesVisible || exampleVisible;
+    detailCanvas.hidden = !(zonesVisible || exampleVisible);
+    toggleZones.textContent = zonesVisible ? "Hide zones" : "Show zones";
+    renderDetailCanvas();
+  });
+  toggleExample.addEventListener("click", () => {
+    exampleVisible = !exampleVisible;
+    detailImage.hidden = zonesVisible || exampleVisible;
+    detailCanvas.hidden = !(zonesVisible || exampleVisible);
+    toggleExample.textContent = exampleVisible ? "Hide example" : "Use example";
+    renderDetailCanvas();
+  });
   document.querySelector("#closeMemeDetail").addEventListener("click", () => memeDetail.close());
   const exampleFile = document.querySelector("#exampleFile");
   const exampleMenu = document.querySelector("#exampleMenu");
