@@ -461,10 +461,13 @@ export function curatorPrompt(image) {
 }
 
 export function curatorExamplePrompt(image, referenceHint = "") {
+    const hasCaptionZones = Array.isArray(image.captionZones) && image.captionZones.length > 0;
     return [
         "Analyze this completed meme as a visual/caption reference for an existing template.",
         `Target template: "${image.template || "Unknown template"}".`,
-        "Extract exact caption placement as normalized captionZones with id, role, captionHint, x, y, w, h.",
+        hasCaptionZones
+            ? "The target template already has authoritative captionZones. Do not return replacement captionZones or captionHint values."
+            : "Extract exact caption placement as normalized captionZones with id, role, captionHint, x, y, w, h.",
         "Infer the humor pattern from the visible wording: irony, deadpan, absurdity, wordplay, self-deprecation, escalation, reversal, overreaction, sarcasm, callback, or other concise tone tags.",
         "Return exampleCaptions with texts in reading order, locale, and note describing the rhythm/structure.",
         "Return tone and captionRules to merge with the target template. Keep facts separate from confidence.",
@@ -472,6 +475,21 @@ export function curatorExamplePrompt(image, referenceHint = "") {
         referenceHint ? `Reference note: "${String(referenceHint).replaceAll('"', "'")}".` : "",
         `Set id to "${image.id}".`,
     ].filter(Boolean).join(" ");
+}
+
+export function curatorCaptionZonesPrompt(image) {
+    const outputPath = `${ANALYSIS_DIR}\\${image.id}.json`;
+    return [
+        "Analyze only the caption placement for this meme template.",
+        `Inspect the local image at "${IMAGE_CACHE_DIR}\\${image.file}" with vision.`,
+        "Return captionZones as normalized text box regions with id, role, captionHint, x, y, w, h.",
+        "Each coordinate is a fraction of the image width or height and each box must surround an intended caption area.",
+        "For captionHint, describe the joke function used in that position, not proposed caption text.",
+        "Do not return template, templateAliases, exampleCaptions, visualDescription, emotion, tone, tags, or captionRules.",
+        "Return confidence as a number from 0 to 1 and set the id exactly.",
+        `Set id to "${image.id}".`,
+        `Write exactly one JSON object to this absolute output path: "${outputPath}".`,
+    ].join(" ");
 }
 
 export function findCopilotCli() {
@@ -494,12 +512,13 @@ export function findCopilotCli() {
     return null;
 }
 
-export async function analyzeMeme(id, hint = "") {
+export async function analyzeMeme(id, hint = "", boxesOnly = false) {
     const index = await loadMemeIndex();
     const image = index.images.find((candidate) => candidate.id === id);
     if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
     if (image.analysisStatus === "analyzing") return image;
-    await updateMeme(id, { analysisStatus: "analyzing", analysisHint: String(hint || "").slice(0, 500) });
+    const analysisHint = boxesOnly ? "Caption zone analysis only" : String(hint || "").slice(0, 500);
+    await updateMeme(id, { analysisStatus: "analyzing", analysisHint });
     const cli = findCopilotCli();
     if (!cli) {
         await updateMeme(id, {
@@ -513,7 +532,9 @@ export async function analyzeMeme(id, hint = "") {
         if (analysisWorkers.has(id)) return { ...image, analysisStatus: "analyzing" };
         const child = execFile("node", [
             cli,
-            `--prompt=${curatorPrompt({ ...image, analysisHint: hint || image.analysisHint })}`,
+            `--prompt=${boxesOnly
+                ? curatorCaptionZonesPrompt(image)
+                : curatorPrompt({ ...image, analysisHint: hint || image.analysisHint })}`,
             "--silent",
             "--allow-all-tools",
             "--trust-folder",
@@ -643,6 +664,27 @@ export async function storeMemeAnalysis(id, content) {
     }
     const existing = (await loadMemeIndex()).images.find((image) => image.id === id);
     if (!existing) throw new CanvasError("meme_not_found", "Meme not found.");
+    const preserveExistingZones = String(existing.analysisHint || "").startsWith("Reference image supplied at ")
+        && Array.isArray(existing.captionZones) && existing.captionZones.length > 0;
+    const captionZonesOnly = existing.analysisHint === "Caption zone analysis only";
+    if (captionZonesOnly) {
+        if (!Array.isArray(result.captionZones) || !result.captionZones.length) {
+            throw new Error("The caption zone analysis did not return any zones.");
+        }
+        return updateMeme(id, {
+            captionZones: result.captionZones.map((zone, index) => ({
+                id: String(zone.id || `zone-${index + 1}`).slice(0, 40),
+                role: String(zone.role || `text-${index + 1}`).slice(0, 80),
+                captionHint: String(zone.captionHint || "").slice(0, 180),
+                x: Math.max(0, Math.min(1, Number(zone.x) || 0)),
+                y: Math.max(0, Math.min(1, Number(zone.y) || 0)),
+                w: Math.max(0.05, Math.min(1, Number(zone.w) || 0.9)),
+                h: Math.max(0.05, Math.min(1, Number(zone.h) || 0.15)),
+            })).slice(0, 8),
+            analysisStatus: confidence < 0.55 ? "needs-review" : "analyzed",
+            analysisError: "",
+        });
+    }
     const analyzed = await updateMeme(id, {
         template: String(result.template || existing.template || "Unknown template").slice(0, 120),
         templateAliases: [...new Set([
@@ -659,14 +701,18 @@ export async function storeMemeAnalysis(id, content) {
             ...(existing.captionRules || []),
             ...(result.captionRules || []).map((value) => String(value).slice(0, 180)),
         ])].slice(0, 12),
-        exampleCaptions: Array.isArray(result.exampleCaptions) && result.exampleCaptions.length
-            ? result.exampleCaptions.map((example) => ({
+        exampleCaptions: (() => {
+            const incoming = Array.isArray(result.exampleCaptions) ? result.exampleCaptions.map((example) => ({
                 texts: Array.isArray(example.texts) ? example.texts.map(String).slice(0, 8) : [],
                 locale: String(example.locale || "").slice(0, 20),
                 note: String(example.note || "").slice(0, 180),
-            })).slice(0, 8)
-            : existing.exampleCaptions || [],
-        captionZones: Array.isArray(result.captionZones) && result.captionZones.length
+            })) : [];
+            const examples = [...(existing.exampleCaptions || []), ...incoming];
+            return [...new Map(examples.map((example) =>
+                [`${example.locale || ""}:${(example.texts || []).join("\n")}`, example]
+            )).values()].slice(-8);
+        })(),
+        captionZones: !preserveExistingZones && Array.isArray(result.captionZones) && result.captionZones.length
             ? result.captionZones.map((zone, index) => ({
                 id: String(zone.id || `zone-${index + 1}`).slice(0, 40),
                 role: String(zone.role || `text-${index + 1}`).slice(0, 80),

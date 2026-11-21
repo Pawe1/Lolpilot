@@ -886,17 +886,6 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
           check.className = "check-value";
           check.textContent = value ? "✅" : "❌";
           check.title = value ? "complete" : "missing";
-          const add = document.createElement("button");
-          add.className = "meta-add";
-          const analyzing = selectedMeme.analysisStatus === "analyzing";
-          add.classList.toggle("pending", analyzing);
-          add.textContent = analyzing ? "Analyzing" : "Add example";
-          add.addEventListener("click", (event) => {
-            event.stopPropagation();
-            exampleAnchor = add;
-            add.parentElement.after(exampleMenu);
-            exampleMenu.classList.toggle("open");
-          });
           row.append(check);
           if (label === "Example caption" && value) {
             const show = document.createElement("button");
@@ -912,7 +901,20 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
             });
             row.append(show);
           }
-          row.append(add);
+          if (label === "Example caption") {
+            const add = document.createElement("button");
+            add.className = "meta-add";
+            const analyzing = selectedMeme.analysisStatus === "analyzing";
+            add.classList.toggle("pending", analyzing);
+            add.textContent = analyzing ? "Analyzing" : "Add example";
+            add.addEventListener("click", (event) => {
+              event.stopPropagation();
+              exampleAnchor = add;
+              add.parentElement.after(exampleMenu);
+              exampleMenu.classList.toggle("open");
+            });
+            row.append(add);
+          }
           dd.append(row);
         } else if (label === "Caption zones") {
           const row = document.createElement("span");
@@ -924,16 +926,22 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
             Number.isFinite(zone.x) && Number.isFinite(zone.y)
             && Number.isFinite(zone.w) && Number.isFinite(zone.h)).length;
           check.title = completeZones + "/" + (selectedMeme.captionZones || []).length + " zones complete";
-          const add = document.createElement("button");
-          add.className = "meta-add";
-          const analyzing = selectedMeme.analysisStatus === "analyzing";
-          add.classList.toggle("pending", analyzing);
-          add.textContent = analyzing ? "Analyzing" : "Add example";
-          add.addEventListener("click", (event) => {
-            event.stopPropagation();
-            exampleAnchor = add;
-            add.parentElement.after(exampleMenu);
-            document.querySelector("#exampleMenu").classList.toggle("open");
+          const resuggest = document.createElement("button");
+          resuggest.className = "meta-add";
+          resuggest.textContent = selectedMeme.analysisStatus === "analyzing"
+            ? "Analyzing" : (selectedMeme.captionZones || []).length ? "Re-suggest boxes" : "Suggest boxes";
+          resuggest.disabled = selectedMeme.analysisStatus === "analyzing";
+          resuggest.addEventListener("click", async () => {
+            resuggest.disabled = true;
+            resuggest.textContent = "Analyzing";
+            try {
+              const updated = await post("/api/meme/analyze-boxes", { id: selectedMeme.id });
+              selectedMeme = updated;
+            } catch (error) {
+              resuggest.disabled = false;
+              resuggest.textContent = "Re-suggest failed";
+              document.querySelector("#memeStatus").textContent = error.message;
+            }
           });
           if ((selectedMeme.captionZones || []).length) {
             const show = document.createElement("button");
@@ -950,7 +958,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
             row.prepend(show);
           }
           row.prepend(check);
-          row.append(add);
+          row.append(resuggest);
           dd.append(row);
         } else {
           dd.textContent = value;
@@ -1227,6 +1235,11 @@ async function startServer() {
             if (request.method === "POST" && url.pathname === "/api/meme/analyze") {
                 const body = await readBody(request);
                 sendJson(response, await analyzeMeme(body.id, body.hint || ""));
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/api/meme/analyze-boxes") {
+                const body = await readBody(request);
+                sendJson(response, await analyzeMeme(body.id, "", true));
                 return;
             }
             if (request.method === "POST" && url.pathname === "/api/meme/analyze-example") {
