@@ -148,7 +148,9 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .status-dot { position: absolute; z-index: 1; top: 7px; right: 7px; width: 13px; height: 13px;
       border: 2px solid white; border-radius: 50%; box-shadow: 0 1px 4px #0008; }
     .status-analyzed { background: #22c55e; }
-    .status-needs-review { background: #3f5fff; }
+    .status-needs-review { background: #475569; }
+    .status-needs-review::after { content:"?"; position:absolute; inset:0; display:grid; place-items:center;
+      color:#fff; font:bold 9px/1 var(--font-sans,Segoe UI,sans-serif); }
     .status-duplicate { background: #eab308; }
     .status-analyzing { background: #3b82f6; animation: statusBlink 1.2s ease-in-out infinite; }
     .status-pending { background: #f97316; }
@@ -354,7 +356,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <select id="statusFilter">
         <option value="all">All</option>
         <option value="analyzed">🟢 Analyzed</option>
-        <option value="needs-review">🔎 Needs review</option>
+        <option value="needs-review">Needs review</option>
         <option value="duplicate">🟡 Duplicate decision</option>
         <option value="analyzing">🔵 Analyzing</option>
         <option value="pending">🟠 Pending</option>
