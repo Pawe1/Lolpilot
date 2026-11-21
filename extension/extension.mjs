@@ -1385,19 +1385,30 @@ function wrapText(text, maxWidth) {
 function fitCaption(text, zone) {
   const width = zone.w * canvas.width;
   const height = zone.h * canvas.height;
-  let fontSize = Math.max(18, Math.min(Math.round(canvas.width / 16), Math.round(height * .9)));
+  let fontSize = Math.max(18, Math.min(Math.round(canvas.width / 14), Math.round(height * .72)));
   let lines = [];
   do {
     ctx.font = "900 " + fontSize + "px Impact, Haettenschweiler, Arial Black, sans-serif";
     lines = wrapText(text, width * .92);
-    if (lines.length * fontSize * 1.05 <= height * .92) break;
+    if (lines.length * fontSize * 1.05 <= height * .9) break;
     fontSize -= 1;
-  } while (fontSize >= 12);
+  } while (fontSize >= 10);
   return { fontSize, lines };
 }
 
-function drawCaptionInZone(text, zone) {
+function usableCaptionZone(zone) {
+  const height = Math.max(Number(zone.h) || 0, .11);
+  const bottom = Math.min(1, (Number(zone.y) || 0) + (Number(zone.h) || 0));
+  return {
+    ...zone,
+    y: Math.max(0, bottom - height),
+    h: height,
+  };
+}
+
+function drawCaptionInZone(text, savedZone) {
   if (!text.trim()) return;
+  const zone = usableCaptionZone(savedZone);
   const x = zone.x * canvas.width;
   const y = zone.y * canvas.height;
   const width = zone.w * canvas.width;
@@ -1408,7 +1419,7 @@ function drawCaptionInZone(text, zone) {
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   ctx.lineJoin = "round";
-  ctx.lineWidth = Math.max(5, Math.round(fontSize / 7));
+  ctx.lineWidth = Math.max(3, Math.round(fontSize / 7));
   ctx.strokeStyle = "#000";
   ctx.fillStyle = "#fff";
   const startY = y + Math.max(0, (height - lines.length * lineHeight) / 2);
