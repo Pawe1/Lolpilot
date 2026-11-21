@@ -572,13 +572,17 @@ export async function analyzeMemeExample(id, input) {
     });
     const cli = findCopilotCli();
     if (!cli) throw new CanvasError("curator_unavailable", "Local Copilot CLI worker is unavailable.");
+    const prompt = curatorExamplePrompt(image) +
+        ` Inspect the supplied reference image attachment and write the result JSON to ` +
+        `${ANALYSIS_DIR}\\${id}.json`;
     const child = execFile("node", [
         cli,
-        `--prompt=${curatorExamplePrompt({ ...image, analysisHint: `Inspect the reference image at ${referencePath}` })}`,
+        `--prompt=${prompt}`,
         "--silent",
         "--allow-all-tools",
         "--trust-folder",
         "--model=auto",
+        `--attachment=${referencePath}`,
         `--name=Lolpilot-Meme-Example-${id}`,
         "--disable-client-telemetry",
     ], {
@@ -588,7 +592,8 @@ export async function analyzeMemeExample(id, input) {
         timeout: 240000,
     }, async (error, stdout, stderr) => {
         try {
-            if (!await syncAnalysisResult(id)) {
+            const consumed = await syncAnalysisResult(id);
+            if (!consumed) {
                 await updateMeme(id, {
                     analysisStatus: "needs-review",
                     analysisError: error?.message || `${stdout || ""}\n${stderr || ""}`.trim().slice(0, 240),
@@ -706,6 +711,26 @@ export async function keepMeme(id) {
     image.replacementSuggested = false;
     image.analysisStatus = Number(image.confidence || 0) < 0.55 ? "needs-review" : "analyzed";
     image.analysisError = "";
+    await saveMemeIndex(index);
+    return image;
+}
+
+export async function setKnowYourMemeUrl(id, value) {
+    const index = await loadMemeIndex();
+    const image = index.images.find((candidate) => candidate.id === id);
+    if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+    const raw = String(value || "").trim();
+    if (raw) {
+        const url = new URL(raw);
+        if (!["http:", "https:"].includes(url.protocol) || url.hostname !== "knowyourmeme.com"
+            && !url.hostname.endsWith(".knowyourmeme.com")) {
+            throw new CanvasError("invalid_kym_url", "Use a URL from knowyourmeme.com.");
+        }
+        image.knowYourMemeUrl = url.href;
+    } else {
+        image.knowYourMemeUrl = "";
+    }
+    image.updatedAt = new Date().toISOString();
     await saveMemeIndex(index);
     return image;
 }
