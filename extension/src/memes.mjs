@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { promisify } from "node:util";
-import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { CanvasError } from "@github/copilot-sdk/extension";
 import { ROOT, ANALYSIS_DIR, IMAGE_CACHE_DIR, MEME_INDEX_PATH } from "./config.mjs";
 
@@ -19,12 +19,69 @@ export async function loadMemeIndex() {
             version: 1,
             images: Array.isArray(parsed.images) ? parsed.images : [],
         };
-    } catch {
+    } catch (error) {
+        const recovered = await restoreMemeIndexBackup();
+        if (recovered) return recovered;
         return { version: 1, images: [] };
     }
 }
 
+export async function backupMemeIndex() {
+    const backupDirectory = `${IMAGE_CACHE_DIR}\\..\\backups`;
+    await mkdir(backupDirectory, { recursive: true });
+    try {
+        const existing = await readFile(MEME_INDEX_PATH, "utf8");
+        JSON.parse(existing);
+        const files = (await readdir(backupDirectory))
+            .filter((name) => /^meme-index-.*\.json$/.test(name))
+            .sort()
+            .reverse();
+        if (files.length) {
+            const newestPath = `${backupDirectory}\\${files[0]}`;
+            const newest = await readFile(newestPath, "utf8");
+            if (newest === existing) return;
+            const age = Date.now() - (await stat(newestPath)).mtimeMs;
+            if (age >= 0 && age < 6 * 60 * 60 * 1000) return;
+        }
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        await writeFile(`${backupDirectory}\\meme-index-${timestamp}.json`, existing, "utf8");
+        for (const name of files.slice(13)) {
+            await unlink(`${backupDirectory}\\${name}`);
+        }
+        return true;
+    } catch (error) {
+        if (error?.code !== "ENOENT") {
+            return 0;
+        }
+    }
+}
+
+async function restoreMemeIndexBackup() {
+    const backupDirectory = `${IMAGE_CACHE_DIR}\\..\\backups`;
+    try {
+        const files = (await readdir(backupDirectory))
+            .filter((name) => /^meme-index-.*\.json$/.test(name))
+            .sort()
+            .reverse();
+        for (const file of files) {
+            try {
+                const parsed = JSON.parse(await readFile(`${backupDirectory}\\${file}`, "utf8"));
+                if (Array.isArray(parsed.images)) {
+                    await writeFile(MEME_INDEX_PATH, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+                    return parsed;
+                }
+            } catch {
+                continue;
+            }
+        }
+    } catch {
+        return null;
+    }
+    return null;
+}
+
 export async function saveMemeIndex(index) {
+    await backupMemeIndex();
     await mkdir(IMAGE_CACHE_DIR, { recursive: true });
     await writeFile(MEME_INDEX_PATH, `${JSON.stringify(index, null, 2)}\n`, "utf8");
     return index;
