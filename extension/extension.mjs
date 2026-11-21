@@ -1434,7 +1434,7 @@ function fitCaption(text, zone) {
   do {
     ctx.font = "900 " + fontSize + "px Impact, Haettenschweiler, Arial Black, sans-serif";
     lines = wrapText(text, width * .92);
-    if (lines.length * fontSize * 1.05 <= height * .9) break;
+    if (lines.length <= 2 && lines.length * fontSize * 1.05 <= height * .9) break;
     fontSize -= 1;
   } while (fontSize >= 10);
   return { fontSize, lines };
