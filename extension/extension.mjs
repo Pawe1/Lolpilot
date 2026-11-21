@@ -289,8 +289,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     <span class="answer-dot" id="answerDot" title="A new assistant answer completed"></span>
     <div class="answer-status" id="answerStatus"></div>
     <div class="buttons">
-      <button class="good" data-reaction="trafione">😂 Hit</button>
-      <button class="bad" data-reaction="meh">😐 Meh</button>
+      <button class="good" data-reaction="hit">Hit</button>
+      <button class="bad" data-reaction="miss">Meh</button>
     </div>
   </section>
   <section class="card">
@@ -320,8 +320,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       "images-on": "set images to often",
       "images-rare": "set images to rare",
       "images-off": "disabled images",
-      trafione: "rated as hit",
-      meh: "rated as miss",
+      hit: "rated as hit",
+      miss: "rated as miss",
     }[profile.lastReaction] || profile.lastReaction)}</strong></span>
   </section>
   <div class="status" id="status"></div>
@@ -840,7 +840,7 @@ async function startServer() {
                     body.reaction,
                     body.turnId === lastAssistantTurn.id ? lastAssistantTurn.styles : []
                 );
-                if (["trafione", "meh"].includes(body.reaction)) next.ratedTurnId = String(body.turnId || "");
+                if (["hit", "miss"].includes(body.reaction)) next.ratedTurnId = String(body.turnId || "");
                 sendJson(response, await saveActiveProfile(next));
                 return;
             }
@@ -1150,7 +1150,7 @@ const session = await joinSession({
                         properties: {
                             reaction: {
                                 type: "string",
-                                enum: ["trafione", "meh", "humor+", "humor-", "humor-stop", "images-on", "images-rare", "images-off", "censor-safe", "censor-off", "pr-memes-on", "pr-memes-off"],
+                                enum: ["hit", "miss", "humor+", "humor-", "humor-stop", "images-on", "images-rare", "images-off", "censor-safe", "censor-off", "pr-memes-on", "pr-memes-off"],
                             },
                         },
                         required: ["reaction"],
@@ -1217,7 +1217,7 @@ const session = await joinSession({
         onSessionStart: async () => ({ additionalContext: profileContext(await loadProfile()) }),
         onUserPromptSubmitted: async (input) => {
             const command = input.prompt.trim().toLowerCase();
-            if (["trafione", "meh", "humor+", "humor-", "humor: stop"].includes(command)) {
+            if (["trafione", "meh", "hit", "miss", "humor+", "humor-", "humor: stop"].includes(command)) {
                 const reaction = command === "humor: stop" ? "humor-stop" : command;
                 await saveActiveProfile(applyReaction(await loadProfile(), reaction));
             }

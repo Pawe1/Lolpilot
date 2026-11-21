@@ -20,8 +20,8 @@ by Git. Existing clue matches can be queried with the `find_meme` canvas action.
 
 ## Commands
 
-- `trafione` records a hit and reinforces the style of the rated answer.
-- `meh` records a miss and lowers the preference score for that answer's style.
+- `hit` records positive feedback and reinforces the style of the rated answer.
+- `miss` records negative feedback and lowers the preference score for that answer's style.
 - `humor+` / `humor-` adjust humor directly.
 - `humor: stop` switches to fully serious responses.
 

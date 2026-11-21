@@ -94,7 +94,7 @@ export function parseProfile(text) {
         images: value("Images", "rare"),
         censorSafe: value("Censor-safe", "true").toLowerCase() !== "false",
         emoji: value("Emoji", "never"),
-        lastReaction: value("Last reaction", "none"),
+        lastReaction: normalizeReaction(value("Last reaction", "none")),
         hits: number("Hits", 0),
         misses: number("Misses", 0),
         ratedTurnId: value("Rated turn", ""),
@@ -262,13 +262,14 @@ export async function deleteProfile(name) {
 }
 
 export function applyReaction(profile, reaction, turnStyles = []) {
-    const next = { ...profile, lastReaction: reaction };
-    switch (reaction) {
-        case "trafione":
+    const normalizedReaction = normalizeReaction(reaction);
+    const next = { ...profile, lastReaction: normalizedReaction };
+    switch (normalizedReaction) {
+        case "hit":
             next.hits += 1;
             next.styleScores = adjustStyleScores(next.styleScores, turnStyles, 1);
             break;
-        case "meh":
+        case "miss":
             next.misses += 1;
             next.styleScores = adjustStyleScores(next.styleScores, turnStyles, -1);
             break;
@@ -305,7 +306,14 @@ export function applyReaction(profile, reaction, turnStyles = []) {
         default:
             throw new CanvasError("invalid_reaction", `Unknown reaction: ${reaction}`);
     }
+
     return next;
+}
+
+export function normalizeReaction(reaction) {
+    if (reaction === "trafione") return "hit";
+    if (reaction === "meh") return "miss";
+    return reaction;
 }
 
 export function profileContext(profile) {
