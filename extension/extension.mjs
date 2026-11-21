@@ -1473,13 +1473,13 @@ async function startPreviewServer(_instanceId, image, captionTexts = []) {
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(image.template || "Lolpilot meme")}</title>
 <style>
-  body { margin:0; min-height:100vh; overflow:auto; background:var(--background-color-default,#0f172a);
+  body { margin:0; height:100vh; overflow:hidden; background:var(--background-color-default,#0f172a);
     color:var(--text-color-default,#f8fafc); font-family:var(--font-sans,Segoe UI,sans-serif); }
-  main { width:min(100%, 720px); min-height:100vh; margin:0 auto; padding:12px;
-    display:flex; flex-direction:column; justify-content:center; }
+  main { width:min(100%, 720px); height:100vh; box-sizing:border-box; margin:0 auto; padding:12px;
+    display:flex; flex-direction:column; justify-content:flex-end; }
   main.dismissing { animation: fadeDismiss 1.5s ease forwards; }
   @keyframes fadeDismiss { to { opacity:0; transform:scale(.985); } }
-  canvas { display:block; width:100%; height:auto; max-height:none; object-fit:contain; background:#000; }
+  canvas { display:block; width:100%; min-height:0; flex:1; height:auto; object-fit:contain; background:#000; }
   body.idle {
     background: linear-gradient(120deg, #f8fafc, #d1d5db, #f8fafc) !important;
     background-size: 220% 220%;
@@ -1487,19 +1487,19 @@ async function startPreviewServer(_instanceId, image, captionTexts = []) {
   }
   @keyframes idleWave { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
   @media (prefers-reduced-motion: reduce) { body.idle { animation:none; } }
-  .feedback { display:flex; justify-content:center; gap:10px; margin-top:16px; padding:0 0 4px; }
+  .feedback { display:flex; flex:0 0 auto; justify-content:center; gap:10px; margin-top:12px; padding:0 0 4px; }
   .feedback button { min-width:110px; min-height:40px; border:1px solid #475569; border-radius:5px;
     color:#111827; background:#fff; font:700 14px var(--font-sans,Segoe UI,sans-serif); cursor:pointer; }
   #hit, #miss { background:#fff; border-color:#d1d5db; }
   .feedback button.selected { outline:3px solid #8b5cf6; outline-offset:1px; }
-  .feedback-note { display:none; gap:8px; margin-top:10px; }
+  .feedback-note { display:none; flex:0 0 auto; gap:8px; margin-top:10px; }
   .feedback-note.open { display:flex; }
   .feedback-note textarea { flex:1; min-height:72px; resize:vertical; border:1px solid #475569; border-radius:5px;
     padding:8px 10px; background:var(--background-color-inset,#fff); color:var(--text-color-default,#111827);
     font:14px var(--font-sans,Segoe UI,sans-serif); }
   .feedback-note button { align-self:flex-end; min-height:38px; border:1px solid #475569; border-radius:5px;
     background:#fff; color:#111827; font:700 13px var(--font-sans,Segoe UI,sans-serif); cursor:pointer; }
-  .dismiss-hint { display:block; padding:8px 0 0; color:var(--text-color-muted,#9da7b3); text-align:center; font-size:12px; }
+  .dismiss-hint { display:block; flex:0 0 auto; padding:8px 0 0; color:var(--text-color-muted,#9da7b3); text-align:center; font-size:12px; }
 </style></head><body>
 <main>
   <canvas id="preview" aria-label="${escapeHtml(image.template || "Meme editor")}"></canvas>
