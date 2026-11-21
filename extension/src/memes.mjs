@@ -538,14 +538,25 @@ export async function recoverAnalysisState() {
     return index.images.filter((image) => image.analysisStatus === "pending").length;
 }
 
+export function requestedTemplateName(hint) {
+    const text = String(hint || "").trim();
+    const match = text.match(
+        /(?:nazwij|nazwa|zmie(?:ń|n) tytu(?:ł|l) na|rename(?: it)? to|name(?: it)?|call it)\s*(?::|=)?\s*["'“”]([^"'“”]+)["'“”]/i
+    );
+    return match?.[1]?.trim().slice(0, 120) || "";
+}
+
 export function curatorPrompt(image) {
     const outputPath = `${ANALYSIS_DIR}\\${image.id}.json`;
+    const requestedTemplate = requestedTemplateName(image.analysisHint);
     return [
         "You are Lolpilot Meme Curator, a specialist in meme templates, visual reactions, pop culture, workplace humor, software engineering, and internet culture.",
         "Do not modify the Lolpilot extension or repository code.",
         `Inspect the local image at "${IMAGE_CACHE_DIR}\\${image.file}" with vision.`,
         image.analysisHint
-            ? `The user suggested this identity hint: "${String(image.analysisHint).replaceAll('"', "'")}". Treat it as a hypothesis to verify, not a fact.`
+            ? requestedTemplate
+                ? `The user explicitly requested the template title "${requestedTemplate}". Use that exact title in the template field.`
+                : `The user suggested this identity hint: "${String(image.analysisHint).replaceAll('"', "'")}". Treat it as a hypothesis to verify, not a fact.`
             : "",
         "Identify the common template name if recognizable; otherwise use Unknown template.",
         "Describe only visual evidence. Do not infer sensitive personal traits, identity, health, or ownership.",
@@ -618,7 +629,18 @@ export async function analyzeMeme(id, hint = "", boxesOnly = false) {
     if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
     if (image.analysisStatus === "analyzing") return image;
     const analysisHint = boxesOnly ? "Caption zone analysis only" : String(hint || "").slice(0, 500);
-    await updateMeme(id, { analysisStatus: "analyzing", analysisHint });
+    const requestedTemplate = boxesOnly ? "" : requestedTemplateName(analysisHint);
+    await updateMeme(id, {
+        analysisStatus: "analyzing",
+        analysisHint,
+        ...(requestedTemplate ? {
+            template: requestedTemplate,
+            templateAliases: [...new Set([
+                ...(image.templateAliases || []),
+                image.template,
+            ].filter(Boolean))].slice(0, 8),
+        } : {}),
+    });
     const cli = findCopilotCli();
     if (!cli) {
         await updateMeme(id, {
@@ -796,7 +818,8 @@ export async function storeMemeAnalysis(id, content) {
         });
     }
     const analyzed = await updateMeme(id, {
-        template: String(result.template || existing.template || "Unknown template").slice(0, 120),
+        template: requestedTemplateName(existing.analysisHint)
+            || String(result.template || existing.template || "Unknown template").slice(0, 120),
         templateAliases: [...new Set([
             ...(existing.templateAliases || []),
             ...(result.templateAliases || []).map((value) => String(value).slice(0, 120)),
