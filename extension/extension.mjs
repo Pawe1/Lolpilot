@@ -881,7 +881,22 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
             add.parentElement.after(exampleMenu);
             exampleMenu.classList.toggle("open");
           });
-          row.append(check, add);
+          row.append(check);
+          if (label === "Example caption" && value) {
+            const show = document.createElement("button");
+            show.id = "toggleExample";
+            show.className = "meta-add";
+            show.textContent = "Show";
+            show.addEventListener("click", () => {
+              exampleVisible = !exampleVisible;
+              detailImage.hidden = zonesVisible || exampleVisible;
+              detailCanvas.hidden = !(zonesVisible || exampleVisible);
+              show.textContent = exampleVisible ? "Hide" : "Show";
+              renderDetailCanvas();
+            });
+            row.append(show);
+          }
+          row.append(add);
           dd.append(row);
         } else if (label === "Caption zones") {
           const row = document.createElement("span");
