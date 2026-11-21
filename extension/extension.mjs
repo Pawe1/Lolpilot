@@ -514,7 +514,11 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       const response = await fetch("/api/memes/status", { cache: "no-store" });
       if (!response.ok) return;
       const state = await response.json();
-      if (exampleAnchor && state.signature === memeSignature) setExamplePending(false);
+      const selectedState = state.statuses?.find((item) => item.id === selectedMeme?.id);
+      if (selectedState && selectedMeme) {
+        selectedMeme.analysisStatus = selectedState.status;
+        if (exampleAnchor) setExamplePending(selectedState.status === "analyzing");
+      }
       if (memeSignature && state.signature !== memeSignature) {
         if (document.querySelector("#memeDetail")?.open) {
           pendingMemeRefresh = true;
@@ -793,8 +797,18 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     if (event.target === memeDetail) memeDetail.close();
   });
   for (const button of document.querySelectorAll("[data-meme-id]")) {
-    button.addEventListener("click", () => {
-      selectedMeme = JSON.parse(button.dataset.meme);
+    button.addEventListener("click", async () => {
+      try {
+        const response = await fetch("/api/meme?id=" + encodeURIComponent(button.dataset.memeId), {
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error("Could not refresh meme status.");
+        selectedMeme = await response.json();
+        button.dataset.meme = JSON.stringify(selectedMeme);
+      } catch (error) {
+        selectedMeme = JSON.parse(button.dataset.meme);
+        document.querySelector("#memeStatus").textContent = error.message;
+      }
       const kymInput = document.querySelector("#knowYourMemeUrl");
       const kymLink = document.querySelector("#openKnowYourMeme");
       kymInput.value = selectedMeme.knowYourMemeUrl || "";
@@ -874,7 +888,9 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
           check.title = value ? "complete" : "missing";
           const add = document.createElement("button");
           add.className = "meta-add";
-          add.textContent = "Add example";
+          const analyzing = selectedMeme.analysisStatus === "analyzing";
+          add.classList.toggle("pending", analyzing);
+          add.textContent = analyzing ? "Analyzing" : "Add example";
           add.addEventListener("click", (event) => {
             event.stopPropagation();
             exampleAnchor = add;
@@ -910,7 +926,9 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
           check.title = completeZones + "/" + (selectedMeme.captionZones || []).length + " zones complete";
           const add = document.createElement("button");
           add.className = "meta-add";
-          add.textContent = "Add example";
+          const analyzing = selectedMeme.analysisStatus === "analyzing";
+          add.classList.toggle("pending", analyzing);
+          add.textContent = analyzing ? "Analyzing" : "Add example";
           add.addEventListener("click", (event) => {
             event.stopPropagation();
             exampleAnchor = add;
@@ -983,6 +1001,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       mimeType: file.type,
       dataUrl,
     });
+    selectedMeme.analysisStatus = "analyzing";
     setExamplePending(true);
     exampleMenu.classList.remove("open");
   }
@@ -996,7 +1015,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     if (!url || !selectedMeme) return;
     setExamplePending(true);
     const response = await post("/api/meme/analyze-example-url", { id: selectedMeme.id, url });
-    if (!response) setExamplePending(false, true);
+    if (response) selectedMeme.analysisStatus = "analyzing";
+    else setExamplePending(false, true);
     exampleMenu.classList.remove("open");
   });
   document.querySelector("#exampleFromClipboard").addEventListener("click", async () => {
@@ -1223,12 +1243,23 @@ async function startServer() {
                 sendJson(response, await analyzeMemeExampleFromUrl(body.id, body.url));
                 return;
             }
+            if (request.method === "GET" && url.pathname === "/api/meme") {
+                const id = url.searchParams.get("id");
+                const image = (await loadMemeIndex()).images.find((candidate) => candidate.id === id);
+                if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+                sendJson(response, image);
+                return;
+            }
             if (request.method === "GET" && url.pathname === "/api/memes/status") {
                 const changed = await syncAnalysisResults();
                 const index = await loadMemeIndex();
                 sendJson(response, {
                     changed,
                     recoveredFromBackup: LAST_INDEX_RECOVERY,
+                    statuses: index.images.map((image) => ({
+                        id: image.id,
+                        status: image.analysisStatus,
+                    })),
                     signature: index.images
                         .map((image) => `${image.id}:${image.analysisStatus}:${image.updatedAt || ""}`)
                         .join("|"),
