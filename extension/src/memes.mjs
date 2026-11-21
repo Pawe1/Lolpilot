@@ -334,6 +334,10 @@ export async function recoverAnalysisState() {
     const index = await loadMemeIndex();
     let changed = false;
     for (const image of index.images) {
+        if (image.duplicateOf && image.analysisStatus === "needs-review") {
+            image.analysisStatus = "duplicate";
+            changed = true;
+        }
         if (image.analysisStatus === "analyzing") {
             image.analysisStatus = "pending";
             image.analysisError = "Recovered after extension reload.";
@@ -500,7 +504,7 @@ export async function storeMemeAnalysis(id, content) {
         return updateMeme(id, {
             duplicateOf: sameTemplate.id,
             replacementSuggested: qualityScore(analyzed) > qualityScore(sameTemplate),
-            analysisStatus: "needs-review",
+            analysisStatus: "duplicate",
             analysisError: `Similar template already exists: ${sameTemplate.template}.`,
         });
     }

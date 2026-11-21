@@ -32,8 +32,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         data-status="${escapeHtml(image.analysisStatus)}"
         data-meme-id="${escapeHtml(image.id)}" data-meme='${escapeHtml(JSON.stringify(image))}'>
         <span class="status-dot status-${escapeHtml(image.analysisStatus)}"
-          title="${escapeHtml(image.duplicateOf ? "Duplicate decision" : image.analysisStatus)}"
-          aria-label="${escapeHtml(image.duplicateOf ? "Duplicate decision" : image.analysisStatus)}"></span>
+          title="${escapeHtml(image.analysisStatus === "duplicate" ? "Duplicate decision" : image.analysisStatus)}"
+          aria-label="${escapeHtml(image.analysisStatus === "duplicate" ? "Duplicate decision" : image.analysisStatus)}"></span>
         <img src="/api/meme/image?id=${encodeURIComponent(image.id)}" alt="${escapeHtml(image.template || image.file)}">
         <span class="meme-name">${escapeHtml(image.template || "Awaiting analysis")}</span>
       </button>
@@ -148,7 +148,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .status-dot { position: absolute; z-index: 1; top: 7px; right: 7px; width: 13px; height: 13px;
       border: 2px solid white; border-radius: 50%; box-shadow: 0 1px 4px #0008; }
     .status-analyzed { background: #22c55e; }
-    .status-needs-review { background: #eab308; }
+    .status-needs-review { background: #3f5fff; }
+    .status-duplicate { background: #eab308; }
     .status-analyzing { background: #3b82f6; animation: statusBlink 1.2s ease-in-out infinite; }
     .status-pending { background: #f97316; }
     .meme-card.analyzing { animation: analysisPulse 2.4s ease-in-out infinite; }
@@ -353,7 +354,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       <select id="statusFilter">
         <option value="all">All</option>
         <option value="analyzed">🟢 Analyzed</option>
-        <option value="needs-review">🟡 Needs review / duplicate</option>
+        <option value="needs-review">🔎 Needs review</option>
+        <option value="duplicate">🟡 Duplicate decision</option>
         <option value="analyzing">🔵 Analyzing</option>
         <option value="pending">🟠 Pending</option>
       </select>
