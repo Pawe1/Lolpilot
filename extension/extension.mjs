@@ -35,7 +35,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
           title="${escapeHtml(image.analysisStatus === "duplicate" ? "Duplicate decision" : image.analysisStatus)}"
           aria-label="${escapeHtml(image.analysisStatus === "duplicate" ? "Duplicate decision" : image.analysisStatus)}"></span>
         <img src="/api/meme/image?id=${encodeURIComponent(image.id)}&v=${encodeURIComponent(image.updatedAt || image.hash)}" alt="${escapeHtml(image.template || image.file)}">
-        <span class="meme-name">${escapeHtml(image.template || "Awaiting analysis")}</span>
+        <span class="meme-name" title="${escapeHtml(image.template || "Awaiting analysis")}">${escapeHtml(image.template || "Awaiting analysis")}</span>
       </button>
     `).join("");
     return `<!doctype html>
@@ -144,7 +144,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     [hidden] { display: none !important; }
     .meme-card:hover { outline: 2px solid #8b5cf6; outline-offset: 1px; }
     .meme-card img { display: block; width: 100%; aspect-ratio: 1 / .72; object-fit: cover; background: #000; }
-    .meme-name { display: block; overflow: hidden; padding: 8px 9px; text-overflow: ellipsis; white-space: nowrap; }
+    .meme-name { display: -webkit-box; overflow: hidden; min-height: calc(2.8em + 16px); padding: 8px 9px;
+      -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.4; }
     .status-dot { position: absolute; z-index: 1; top: 7px; right: 7px; width: 13px; height: 13px;
       border: 2px solid white; border-radius: 50%; box-shadow: 0 1px 4px #0008; }
     .status-analyzed { background: #22c55e; }
