@@ -541,9 +541,17 @@ export async function recoverAnalysisState() {
 export function requestedTemplateName(hint) {
     const text = String(hint || "").trim();
     const match = text.match(
-        /(?:nazwij|nazwa|zmie(?:ń|n) tytu(?:ł|l) na|rename(?: it)? to|name(?: it)?|call it)\s*(?::|=)?\s*["'“”]([^"'“”]+)["'“”]/i
+        /(?:nazwij|nazwa|zmie(?:ń|n) tytu(?:ł|l) na|rename(?: it)? to|name(?: it)?|call it)\s*(?::|=)?\s*(.+)$/i
     );
-    return match?.[1]?.trim().slice(0, 120) || "";
+    const raw = match?.[1]?.trim() || "";
+    if (!raw) return "";
+    const opening = raw[0];
+    const matching = { '"': '"', "'": "'", "“": "”", "„": "”", "`": "`" }[opening];
+    if (matching) {
+        const closing = raw.lastIndexOf(matching);
+        if (closing > 0) return raw.slice(1, closing).trim().slice(0, 120);
+    }
+    return raw.slice(0, 120);
 }
 
 export function curatorPrompt(image) {
@@ -630,8 +638,9 @@ export async function analyzeMeme(id, hint = "", boxesOnly = false) {
     if (image.analysisStatus === "analyzing") return image;
     const analysisHint = boxesOnly ? "Caption zone analysis only" : String(hint || "").slice(0, 500);
     const requestedTemplate = boxesOnly ? "" : requestedTemplateName(analysisHint);
-    await updateMeme(id, {
-        analysisStatus: "analyzing",
+    const updated = await updateMeme(id, {
+        analysisStatus: requestedTemplate ? "analyzed" : "analyzing",
+        analysisError: "",
         analysisHint,
         ...(requestedTemplate ? {
             template: requestedTemplate,
@@ -641,6 +650,7 @@ export async function analyzeMeme(id, hint = "", boxesOnly = false) {
             ].filter(Boolean))].slice(0, 8),
         } : {}),
     });
+    if (requestedTemplate) return updated;
     const cli = findCopilotCli();
     if (!cli) {
         await updateMeme(id, {
@@ -813,7 +823,9 @@ export async function storeMemeAnalysis(id, content) {
                 w: Math.max(0.05, Math.min(1, Number(zone.w) || 0.9)),
                 h: Math.max(0.05, Math.min(1, Number(zone.h) || 0.15)),
             })).slice(0, 8),
-            analysisStatus: confidence < 0.55 ? "needs-review" : "analyzed",
+            analysisStatus: requestedTemplateName(existing.analysisHint) || confidence >= 0.55
+                ? "analyzed"
+                : "needs-review",
             analysisError: "",
         });
     }
