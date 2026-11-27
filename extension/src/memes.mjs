@@ -390,23 +390,98 @@ export async function addMemeFromUrl(url) {
 }
 
 export function findMemes(index, query) {
-    const terms = normalizeTags(query);
+    const stopWords = new Set([
+        "a", "an", "and", "at", "be", "for", "from", "in", "is", "of", "on", "or", "that", "the", "to",
+        "ale", "bez", "czy", "dla", "do", "gdzie", "i", "jak", "jest", "na", "nie", "o", "oraz",
+        "sie", "się", "to", "w", "we", "z", "za", "ze", "że",
+    ]);
+    const normalizedQuery = normalizeTags(query);
+    const terms = [...new Set(normalizedQuery
+        .flatMap((term) => [term, ...term.split("-")])
+        .filter((term) => term.length >= 3 && !stopWords.has(term)))];
+    const queryText = terms.join(" ");
+    const tokenizeMetadata = (values) => [...new Set(values
+        .flatMap((value) => normalizeTags(String(value || "")))
+        .flatMap((token) => [token, ...token.split("-")])
+        .filter(Boolean))];
     return index.images
         .map((image) => {
-            const searchable = normalizeTags([image.clue, ...image.tags].join(","));
-            const matches = terms.filter((term) => searchable.includes(term)).length;
+            const coreMetadata = tokenizeMetadata([
+                image.template,
+                ...(image.templateAliases || []),
+                image.clue,
+                ...(image.tags || []),
+                ...(image.tone || []),
+                image.emotion,
+            ]);
+            const usageMetadata = tokenizeMetadata([
+                image.usageHints,
+                ...(image.captionRules || []),
+                ...(image.captionZones || []).map((zone) => zone.captionHint),
+                ...(image.exampleCaptions || []).flatMap((example) => [
+                    example.note,
+                    ...(example.texts || []),
+                ]),
+            ]);
+            const coreMatches = terms.filter((term) => coreMetadata.includes(term)).length;
+            const usageMatches = terms.filter((term) => usageMetadata.includes(term)).length;
             const fuzzyMatches = terms.filter((term) =>
-                searchable.some((value) => value.includes(term) || term.includes(value))
+                [...coreMetadata, ...usageMetadata].some((value) =>
+                    value.includes(term) || term.includes(value))
             ).length;
+            const corePhrase = coreMetadata.join(" ");
+            const usagePhrase = usageMetadata.join(" ");
+            const phraseBonus = queryText.length > 5
+                && (corePhrase.includes(queryText) ? 6 : usagePhrase.includes(queryText) ? 4 : 0);
             return {
                 image,
-                score: matches * 4 + fuzzyMatches + Math.min(image.uses, 3) * 0.1
+                score: coreMatches * 4 + usageMatches * 2.5 + fuzzyMatches + phraseBonus
+                    + Math.min(image.uses, 3) * 0.1
                     + feedbackRankingAdjustment(image),
             };
         })
         .filter(({ score }) => score > 0)
         .sort((left, right) => right.score - left.score)
         .map(({ image, score }) => ({ ...image, score }));
+}
+
+export function memeGenerationContext(image) {
+    const examples = (image.exampleCaptions || [])
+        .flatMap((example) => (example.texts || []).length
+            ? [`${example.texts.join(" | ")}${example.note ? ` (${example.note})` : ""}`]
+            : [])
+        .slice(-4);
+    const zones = (image.captionZones || [])
+        .map((zone) => `${zone.role || zone.id}: ${zone.captionHint || ""}`.trim())
+        .filter(Boolean)
+        .slice(0, 8);
+    const rules = (image.captionRules || []).filter(Boolean).slice(-10);
+    const feedback = image.feedback?.learning || {};
+    return [
+        `Template identity: ${image.template || "Unknown template"}.`,
+        image.usageHints ? `Primary usage guidance: ${image.usageHints}` : "",
+        (image.tone || []).length || image.emotion
+            ? `Tone/emotion: ${[...(image.tone || []), image.emotion].filter(Boolean).join(", ")}.`
+            : "",
+        rules.length ? `Caption rules in priority order: ${rules.join(" ;; ")}.` : "",
+        zones.length ? `Caption zone purposes: ${zones.join(" ;; ")}.` : "",
+        examples.length
+            ? `Format references only, not text to copy: ${examples.join(" ;; ")}.`
+            : "",
+        feedback.reinforcedCaptions?.length
+            ? `Previously successful formats: ${feedback.reinforcedCaptions
+                .sort((left, right) => Number(right.weight || 0) - Number(left.weight || 0))
+                .slice(0, 3).map((entry) => entry.texts.join(" | ")).join(" ;; ")}.`
+            : "",
+        feedback.notes?.length
+            ? `User feedback constraints: ${feedback.notes.slice(-3).join(" ;; ")}.`
+            : "",
+        Object.keys(feedback.failureCategories || {}).length
+            ? `Known failure categories to avoid: ${Object.entries(feedback.failureCategories)
+                .map(([category, count]) => `${category} (${count})`).join(", ")}.`
+            : "",
+        "Generate original captions for the current topic. Preserve the template's beat structure and zone count; do not copy example wording unless it is the user's actual request.",
+    ].filter(Boolean).join(" ");
 }
 
 export async function deleteMeme(id) {

@@ -9,6 +9,7 @@ import {
 } from "./src/profiles.mjs";
 import {
     addMeme, addMemeFromUrl, analyzeMeme, analyzeMemeExample, analyzeMemeExampleFromUrl, analyzePendingMemes, deleteMeme, findMemes, keepMeme,
+    memeGenerationContext,
     LAST_INDEX_RECOVERY, loadMemeIndex, recoverAnalysisState, recordMemeFeedback, replaceMeme, replaceMemeImage, saveMemeIndex, setKnowYourMemeUrl, setMemeGuidance, syncAnalysisResults, backupMemeIndex,
 } from "./src/memes.mjs";
 
@@ -1865,18 +1866,7 @@ const session = await joinSession({
                     if (meme.analysisStatus === "analyzed") {
                         context.push(
                             `A native image attachment matching this topic is available: template="${meme.template}"; tags=${meme.tags.join(",")}.`,
-                            meme.usageHints ? `Usage guidance: ${meme.usageHints}` : "",
-                            meme.feedback?.learning?.reinforcedCaptions?.length
-                                ? `Previously successful captions: ${meme.feedback.learning.reinforcedCaptions
-                                    .slice(-3).map((entry) => entry.texts.join(" | ")).join(" ;; ")}`
-                                : "",
-                            Object.keys(meme.feedback?.learning?.failureCategories || {}).length
-                                ? `Avoid known failures for this template: ${Object.entries(meme.feedback.learning.failureCategories)
-                                    .map(([category, count]) => `${category} (${count})`).join(", ")}.`
-                                : "",
-                            meme.feedback?.learning?.notes?.length
-                                ? `User feedback notes: ${meme.feedback.learning.notes.slice(-3).join(" ;; ")}.`
-                                : "",
+                            memeGenerationContext(meme),
                             "Image output is currently disabled because this host cannot publish extension images inside assistant responses. Do not mention or attach the image."
                         );
                     } else {
