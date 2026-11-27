@@ -369,6 +369,9 @@ export function prMemeInstructions(pendingPrMeme) {
     return [
         "Lolpilot detected a PR review meme suggestion.",
         `Suggested caption: ${pendingPrMeme.caption}`,
+        `PR context: ${pendingPrMeme.prompt}`,
+        "Use the matched meme's usage guidance, caption rules, zones, examples, and feedback to generate original captions.",
+        "Open the lolpilot-meme-preview canvas in PR mode with this PR context and the generated captions so the user can approve the image before publication.",
         "Use this only at humor level 4/4 and only after the substantive review findings, as an optional P.S. suggestion at the very end.",
         "Never mix the meme into a blocking finding or security/reliability result.",
         "Do not upload, attach, or publish any meme to GitHub without explicit user confirmation in this turn.",

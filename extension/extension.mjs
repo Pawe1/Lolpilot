@@ -1507,7 +1507,55 @@ async function startServer() {
     return { server, url: `http://127.0.0.1:${port}/` };
 }
 
-async function startPreviewServer(_instanceId, image, captionTexts = []) {
+function prCaptionTexts(image, caption) {
+    const text = String(caption || "").trim();
+    const zoneCount = Math.max(1, (image.captionZones || []).length);
+    if (zoneCount === 1) return [text];
+    const explicit = text.split(/\s+[\/|]\s+|\r?\n/).map((part) => part.trim()).filter(Boolean);
+    if (explicit.length === zoneCount) return explicit;
+    if (zoneCount === 2) {
+        const pivot = text.match(/^(.{20,}?)(?:[.!?]\s+|[,;]\s+)(.{12,})$/);
+        if (pivot) return [pivot[1].trim(), pivot[2].trim()];
+    }
+    return Array.from({ length: zoneCount }, (_, index) => index === 0 ? text : "");
+}
+
+function selectPrMeme(index, prompt, excludedId = "") {
+    const matches = findMemes(index, prompt)
+        .filter((meme) => meme.id !== excludedId
+            && meme.analysisStatus === "analyzed"
+            && (meme.captionZones || []).length);
+    if (matches.length) return matches[0];
+    return index.images.find((meme) => meme.id !== excludedId
+        && meme.analysisStatus === "analyzed"
+        && (meme.captionZones || []).length) || null;
+}
+
+async function generatePrMemePreview(prPrompt, excludedId = "") {
+    const index = await loadMemeIndex();
+    const image = selectPrMeme(index, prPrompt, excludedId);
+    if (!image) throw new CanvasError("no_pr_meme_candidate", "No analyzed meme with caption zones is available.");
+    const text = String(prPrompt || "").replace(/\s+/g, " ").trim();
+    const task = text.replace(/^(review|open|prepare|submit|create|mój|mojego)\b[^:]*:?\s*/i, "")
+        .slice(0, 90);
+    const patterns = [
+        [`PR: ${task}`, "And somehow the edge case joined the review"],
+        [`We added ${task}`, "Reviewer: what could possibly go wrong now?"],
+        [`One small PR change`, `Meanwhile: ${task}`],
+    ];
+    const pattern = patterns[(Number(image.feedback?.hit || 0) + Number(image.feedback?.miss || 0))
+        % patterns.length];
+    const singleCaption = /(?:one caption|single caption|1 podpis|jeden podpis)/i
+        .test(`${image.usageHints || ""} ${(image.captionRules || []).join(" ")}`);
+    const captionCount = singleCaption ? 1 : Math.max(1, (image.captionZones || []).length);
+    const captions = Array.from({ length: captionCount }, (_, index) =>
+        pattern[index] || "");
+    return { image, captionTexts: captions };
+}
+
+async function startPreviewServer(_instanceId, image, captionTexts = [], prOptions = null) {
+    let renderImage = image;
+    let renderCaptionTexts = [...captionTexts];
     const server = createServer(async (request, response) => {
         const url = new URL(request.url, "http://127.0.0.1");
         if (url.pathname === "/close" && request.method === "POST") {
@@ -1522,27 +1570,73 @@ async function startPreviewServer(_instanceId, image, captionTexts = []) {
                 response.end("Invalid rating.");
                 return;
             }
-            const updated = await recordMemeFeedback(image.id, {
+            const updated = await recordMemeFeedback(renderImage.id, {
                 value: body.value,
                 note: body.note,
-                captionTexts,
+                captionTexts: renderCaptionTexts,
             });
-            sendJson(response, { id: image.id, value: body.value, feedback: updated.feedback });
+            sendJson(response, { id: renderImage.id, value: body.value, feedback: updated.feedback });
+            return;
+        }
+        if (prOptions && url.pathname === "/pr/regenerate" && request.method === "POST") {
+            try {
+                const generated = await generatePrMemePreview(prOptions.prompt, renderImage.id);
+                renderImage = generated.image;
+                renderCaptionTexts = generated.captionTexts;
+                sendJson(response, {
+                    memeId: renderImage.id,
+                    title: renderImage.template || "Lolpilot PR Meme",
+                    captionZones: renderImage.captionZones || [],
+                    captions: renderCaptionTexts,
+                });
+            } catch (error) {
+                response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+                response.end(error instanceof Error ? error.message : "Could not regenerate the PR meme.");
+            }
+            return;
+        }
+        if (prOptions && url.pathname === "/pr/add" && request.method === "POST") {
+            try {
+                const body = await readBody(request);
+                const match = String(body.dataUrl || "").match(/^data:image\/png;base64,(.+)$/);
+                if (!match) throw new CanvasError("invalid_pr_meme_image", "A rendered PNG image is required.");
+                await session.send({
+                    prompt: [
+                        "The user explicitly clicked Add to PR in the Lolpilot meme preview.",
+                        "Publish this generated PNG to the current pull request with a short caption.",
+                        "Do not ask for another publication confirmation; this click is the confirmation.",
+                        `Meme template: ${renderImage.template || "Unknown template"}.`,
+                        `Caption: ${renderCaptionTexts.join(" | ")}`,
+                    ].join(" "),
+                    attachments: [{
+                        type: "blob",
+                        data: match[1],
+                        mimeType: "image/png",
+                        displayName: "lolpilot-pr-meme.png",
+                    }],
+                    source: "user",
+                    mode: "immediate",
+                });
+                sendJson(response, { accepted: true });
+            } catch (error) {
+                response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+                response.end(error instanceof Error ? error.message : "Could not send the PR meme.");
+            }
             return;
         }
         if (url.pathname === "/image") {
             response.writeHead(200, {
-                "Content-Type": image.mimeType,
+                "Content-Type": renderImage.mimeType,
                 "Cache-Control": "private, no-store",
                 "X-Content-Type-Options": "nosniff",
             });
-            response.end(await readFile(`${IMAGE_CACHE_DIR}\\${image.file}`));
+            response.end(await readFile(`${IMAGE_CACHE_DIR}\\${renderImage.file}`));
             return;
         }
         response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         response.end(`<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(image.template || "Lolpilot meme")}</title>
+<title>${escapeHtml(renderImage.template || "Lolpilot meme")}</title>
 <style>
   body { margin:0; height:100vh; overflow:hidden; background:var(--background-color-default,#0f172a);
     color:var(--text-color-default,#f8fafc); font-family:var(--font-sans,Segoe UI,sans-serif); }
@@ -1550,7 +1644,8 @@ async function startPreviewServer(_instanceId, image, captionTexts = []) {
     display:flex; flex-direction:column; justify-content:flex-end; }
   main.dismissing { animation: fadeDismiss 1.5s ease forwards; }
   @keyframes fadeDismiss { to { opacity:0; transform:scale(.985); } }
-  canvas { display:block; width:100%; min-height:0; flex:1; height:auto; object-fit:contain; background:#000; }
+  canvas { display:block; width:100%; min-height:0; flex:1; height:auto; object-fit:contain;
+    background:transparent; }
   body.idle {
     background: linear-gradient(120deg, #f8fafc, #d1d5db, #f8fafc) !important;
     background-size: 220% 220%;
@@ -1563,6 +1658,13 @@ async function startPreviewServer(_instanceId, image, captionTexts = []) {
     color:#111827; background:#fff; font:700 14px var(--font-sans,Segoe UI,sans-serif); cursor:pointer; }
   #hit, #miss { background:#fff; border-color:#d1d5db; }
   .feedback button.selected { outline:3px solid #8b5cf6; outline-offset:1px; }
+  .pr-actions { display:${prOptions ? "flex" : "none"}; flex:0 0 auto; justify-content:center; gap:10px; margin-top:10px; }
+  .pr-actions button { min-height:42px; border:1px solid #475569; border-radius:5px; padding:0 14px;
+    color:#111827; background:#fff; font:700 13px var(--font-sans,Segoe UI,sans-serif); cursor:pointer; }
+  .pr-actions button.primary { color:#fff; background:#0969da; border-color:#0969da; }
+  .pr-actions button:disabled { opacity:.55; cursor:wait; }
+  .pr-status { display:${prOptions ? "block" : "none"}; min-height:18px; padding-top:6px;
+    color:var(--text-color-muted,#9da7b3); text-align:center; font-size:12px; }
   .feedback-note { display:none; flex:0 0 auto; gap:8px; margin-top:10px; }
   .feedback-note.open { display:flex; }
   .feedback-note textarea { flex:1; min-height:72px; resize:vertical; border:1px solid #475569; border-radius:5px;
@@ -1574,6 +1676,11 @@ async function startPreviewServer(_instanceId, image, captionTexts = []) {
 </style></head><body>
 <main>
   <canvas id="preview" aria-label="${escapeHtml(image.template || "Meme editor")}"></canvas>
+  <div class="pr-actions">
+    <button id="regeneratePr" type="button">Generate new</button>
+    <button id="addToPr" type="button" class="primary">Add to PR</button>
+  </div>
+  <div id="prStatus" class="pr-status" role="status"></div>
   <div class="feedback">
     <button id="miss" aria-label="Meh" title="Meh">😐</button>
     <button id="missNote" aria-label="Meh with feedback" title="Słabe — dodaj opis">😐 + note</button>
@@ -1588,9 +1695,10 @@ async function startPreviewServer(_instanceId, image, captionTexts = []) {
 <script>
 const canvas = document.querySelector("#preview");
 const ctx = canvas.getContext("2d");
-const captionZones = ${JSON.stringify(image.captionZones || [])};
-const captionTexts = ${JSON.stringify(captionTexts)};
+let captionZones = ${JSON.stringify(renderImage.captionZones || [])};
+let captionTexts = ${JSON.stringify(renderCaptionTexts)};
 const renderScale = 2;
+const allowDismiss = ${prOptions ? "false" : "true"};
 const source = new Image();
 source.onload = render;
 source.src = "/image";
@@ -1703,7 +1811,46 @@ document.querySelector("#sendFeedback").addEventListener("click", async () => {
   text.value = "";
   document.querySelector("#feedbackNote").classList.remove("open");
 });
-canvas.addEventListener("click", () => {
+const regeneratePr = document.querySelector("#regeneratePr");
+const addToPr = document.querySelector("#addToPr");
+const prStatus = document.querySelector("#prStatus");
+if (regeneratePr) regeneratePr.addEventListener("click", async () => {
+  regeneratePr.disabled = true;
+  addToPr.disabled = true;
+  prStatus.textContent = "Generating a new caption and template…";
+  try {
+    const response = await fetch("/pr/regenerate", { method:"POST" });
+    if (!response.ok) throw new Error(await response.text());
+    const next = await response.json();
+    captionZones = next.captionZones;
+    captionTexts = next.captions;
+    source.src = "/image?v=" + Date.now();
+    prStatus.textContent = next.title;
+  } catch (error) {
+    prStatus.textContent = error.message;
+  } finally {
+    regeneratePr.disabled = false;
+    addToPr.disabled = false;
+  }
+});
+if (addToPr) addToPr.addEventListener("click", async () => {
+  addToPr.disabled = true;
+  prStatus.textContent = "Sending to the pull request…";
+  try {
+    const response = await fetch("/pr/add", {
+      method:"POST",
+      headers: {"content-type":"application/json"},
+      body: JSON.stringify({ dataUrl: canvas.toDataURL("image/png") })
+    });
+    if (!response.ok) throw new Error(await response.text());
+    prStatus.textContent = "Sent to the current PR agent.";
+  } catch (error) {
+    prStatus.textContent = error.message;
+  } finally {
+    addToPr.disabled = false;
+  }
+});
+if (allowDismiss) canvas.addEventListener("click", () => {
   document.querySelector("main").classList.add("dismissing");
   setTimeout(() => {
     document.body.innerHTML = "";
@@ -1814,13 +1961,24 @@ const session = await joinSession({
                         description: "Caption text for each saved caption zone, in reading order.",
                         items: { type: "string" },
                     },
+                    prMode: {
+                        type: "boolean",
+                        description: "Show PR publication controls and regenerate the meme from PR context.",
+                    },
+                    prPrompt: {
+                        type: "string",
+                        description: "The pull-request task or review context used to generate the meme.",
+                    },
                 },
-                required: ["memeId"],
+                required: [],
             },
             open: async (ctx) => {
-                const image = (await loadMemeIndex()).images.find((candidate) =>
-                    candidate.id === String(ctx.input.memeId)
-                );
+                const index = await loadMemeIndex();
+                const prMode = ctx.input.prMode === true;
+                const prPrompt = String(ctx.input.prPrompt || pendingPrMeme?.prompt || "Review this pull request.");
+                const image = prMode
+                    ? selectPrMeme(index, prPrompt)
+                    : index.images.find((candidate) => candidate.id === String(ctx.input.memeId));
                 if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
                 const existing = previewServers.get(ctx.instanceId);
                 if (existing) {
@@ -1832,10 +1990,18 @@ const session = await joinSession({
                     image,
                     Array.isArray(ctx.input.captions)
                         ? ctx.input.captions.map((value) => String(value))
-                        : String(ctx.input.caption || "").split(/\r?\n|\s*[|]\s*/).map((value) => value.trim()).filter(Boolean)
+                        : prMode
+                            ? prCaptionTexts(image,
+                                String(pendingPrMeme?.caption || suggestPrMeme(prPrompt, {
+                                    ...(await loadProfile()),
+                                    suggestPrMemes: true,
+                                    level: 4,
+                                })?.caption || "Pull request fixed. New questions discovered."))
+                            : String(ctx.input.caption || "").split(/\r?\n|\s*[|]\s*/).map((value) => value.trim()).filter(Boolean),
+                    prMode ? { prompt: prPrompt } : null
                 );
                 previewServers.set(ctx.instanceId, entry);
-                return { title: image.template || "Lolpilot Meme", url: entry.url };
+                return { title: prMode ? "Lolpilot PR Meme" : image.template || "Lolpilot Meme", url: entry.url };
             },
             onClose: async (ctx) => {
                 const entry = previewServers.get(ctx.instanceId);
