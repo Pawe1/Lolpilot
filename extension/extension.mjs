@@ -513,7 +513,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   const statusFilter = document.querySelector("#statusFilter");
   const memeSearch = document.querySelector("#memeSearch");
   const sortMemes = document.querySelector("#sortMemes");
-  let newestFirst = true;
+  const initialSort = new URLSearchParams(location.search).get("sort");
+  let newestFirst = initialSort !== "oldest";
   let memeSignature = "";
   let pendingMemeRefresh = false;
   async function refreshMemeStatus() {
@@ -544,6 +545,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         params.set("view", "library");
         if (statusFilter.value !== "all") params.set("status", statusFilter.value);
         if (memeSearch.value) params.set("q", memeSearch.value);
+        params.set("sort", newestFirst ? "newest" : "oldest");
         location.assign("?" + params.toString());
       }
       memeSignature = state.signature;
@@ -578,6 +580,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     else params.set("status", statusFilter.value);
     if (memeSearch.value) params.set("q", memeSearch.value);
     else params.delete("q");
+    params.set("sort", newestFirst ? "newest" : "oldest");
     history.replaceState(null, "", "?" + params.toString());
   }
   statusFilter.addEventListener("change", persistLibraryFilters);
@@ -596,6 +599,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   sortMemes.addEventListener("click", () => {
     newestFirst = !newestFirst;
     sortMemeCards();
+    persistLibraryFilters();
   });
   sortMemeCards();
   filterLibrary();
@@ -979,6 +983,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
             try {
               const updated = await post("/api/meme/analyze-boxes", { id: selectedMeme.id });
               selectedMeme = updated;
+              const card = document.querySelector('[data-meme-id="' + updated.id + '"]');
+              if (card) card.dataset.meme = JSON.stringify(updated);
             } catch (error) {
               resuggest.disabled = false;
               resuggest.textContent = "Re-suggest failed";
@@ -1172,18 +1178,24 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   galleryUsageGuidance.addEventListener("input", () => {
     saveUsageGuidance.disabled = !galleryUsageGuidance.value.trim();
   });
-  saveUsageGuidance.addEventListener("click", () => {
+  saveUsageGuidance.addEventListener("click", async () => {
     if (!selectedMeme) return;
-    run(async () => {
+    saveUsageGuidance.disabled = true;
+    try {
       const updated = await post("/api/meme/guidance", {
         id: selectedMeme.id,
         guidance: galleryUsageGuidance.value,
       });
       selectedMeme = updated;
+      const card = document.querySelector('[data-meme-id="' + updated.id + '"]');
+      if (card) card.dataset.meme = JSON.stringify(updated);
       saveUsageGuidance.textContent = "Saved";
       setTimeout(() => saveUsageGuidance.textContent = "Save guidance", 1500);
-      return updated;
-    });
+    } catch (error) {
+      document.querySelector("#memeStatus").textContent = error.message;
+    } finally {
+      saveUsageGuidance.disabled = false;
+    }
   });
   deleteMemeButton.addEventListener("click", () =>
     selectedMeme && run(() => post("/api/meme/delete", { id: selectedMeme.id })));
@@ -1397,7 +1409,7 @@ async function startServer() {
                         error: image.analysisError || "",
                     })),
                     signature: index.images
-                        .map((image) => `${image.id}:${image.analysisStatus}:${image.updatedAt || ""}`)
+                        .map((image) => `${image.id}:${image.analysisStatus}`)
                         .join("|"),
                 });
                 return;
