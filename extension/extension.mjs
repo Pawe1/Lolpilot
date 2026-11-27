@@ -145,7 +145,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       border: 1px solid var(--lp-border); border-radius: 5px; background: var(--lp-control); }
     [hidden] { display: none !important; }
     .meme-card:hover { outline: 2px solid #8b5cf6; outline-offset: 1px; }
-    .meme-card img { display: block; width: 100%; aspect-ratio: 1 / .72; object-fit: cover; background: #000; }
+    .meme-card img { display: block; width: 100%; aspect-ratio: 1 / .72; object-fit: cover; background: transparent; }
     .meme-name { display: -webkit-box; overflow: hidden; min-height: calc(2.8em + 16px); padding: 8px 9px;
       -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.4; }
     .status-dot { position: absolute; z-index: 1; top: 7px; right: 7px; width: 13px; height: 13px;
@@ -190,14 +190,14 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     .filter-count strong { font-size: 15px; }
     .filter-count span { color: var(--lp-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
     .meme-detail { max-width: min(620px, calc(100vw - 28px)); }
-    .meme-detail img { display: block; width: 100%; max-height: 55vh; object-fit: contain; border-radius: 5px; background: #000; }
+    .meme-detail img { display: block; width: 100%; max-height: 55vh; object-fit: contain; border-radius: 5px; background: transparent; }
     .zone-preview { position: relative; }
-    .zone-preview canvas { display:block; width:100%; max-height:55vh; object-fit:contain; background:#000; border-radius:5px; }
+    .zone-preview canvas { display:block; width:100%; max-height:55vh; object-fit:contain; background:transparent; border-radius:5px; }
     .meme-detail dl { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 7px 12px; }
     .meme-detail dt { color: var(--lp-muted); }
     .meme-detail dd { margin: 0; overflow-wrap: anywhere; }
     .duplicate-match { margin: 14px 0; padding: 12px; border: 1px solid #eab308; border-radius: 5px; }
-    .duplicate-match img { width: 100%; max-height: 180px; object-fit: contain; margin: 8px 0; background:#000; }
+    .duplicate-match img { width: 100%; max-height: 180px; object-fit: contain; margin: 8px 0; background:transparent; }
     .duplicate-match p { margin: 3px 0; }
     .identity-hint { display:grid; gap:8px; margin-top:12px; }
     .identity-hint textarea { min-height:64px; resize:vertical; border:1px solid var(--lp-border); border-radius:5px;
