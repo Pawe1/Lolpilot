@@ -379,7 +379,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
           <button id="addUrl">From URL</button>
           <button id="addClipboard">From clipboard</button>
         </div>
-        <input id="memeFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+        <input id="memeFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple>
       </div>
       <div id="memeStatus" class="meme-status"></div>
     </section>
@@ -640,14 +640,16 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   document.querySelector("#profile").addEventListener("change", (event) =>
     run(() => post("/api/profile/switch", { name: event.target.value })));
 
-  async function importMemeResult(result) {
+  async function importMemeResult(result, navigate = true) {
     status.textContent = "Imported. Agent analysis will run next.";
+    await post("/api/meme/analyze", { id: result.id });
+    if (!navigate) return result;
     const params = new URLSearchParams(location.search);
     params.set("view", "library");
     if (statusFilter.value !== "all") params.set("status", statusFilter.value);
     if (memeSearch.value) params.set("q", memeSearch.value);
+    params.set("sort", newestFirst ? "newest" : "oldest");
     params.set("addOpen", "1");
-    await post("/api/meme/analyze", { id: result.id });
     location.assign("?" + params.toString());
   }
 
@@ -655,6 +657,13 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   const memeStatus = document.querySelector("#memeStatus");
   const addButton = document.querySelector("#addMeme");
   const addMenu = document.querySelector("#addMenu");
+  const initialImportError = new URLSearchParams(location.search).get("importError");
+  if (initialImportError) {
+    memeStatus.textContent = initialImportError;
+    const params = new URLSearchParams(location.search);
+    params.delete("importError");
+    history.replaceState(null, "", "?" + params.toString());
+  }
   addButton.addEventListener("click", () => addMenu.classList.toggle("open"));
   if (new URLSearchParams(location.search).get("addOpen") === "1") addMenu.classList.add("open");
   document.querySelector("#addFile").addEventListener("click", () => memeFile.click());
@@ -681,7 +690,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       memeStatus.textContent = error.message;
     }
   });
-  async function importMemeFile(file) {
+  async function importMemeFile(file, navigate = true) {
     try {
       const dataUrl = await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -714,13 +723,42 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         dataUrl,
         perceptualHash
       });
-      await importMemeResult(result);
+      await importMemeResult(result, navigate);
     } catch (error) {
       memeStatus.textContent = error.message;
+      throw error;
+    }
+  }
+  async function importMemeFiles(files) {
+    const selected = [...files];
+    const failures = [];
+    let imported = 0;
+    for (const [index, file] of selected.entries()) {
+      memeStatus.textContent = "Importing " + (index + 1) + "/" + selected.length + ": " + file.name;
+      try {
+        await importMemeFile(file, false);
+        imported += 1;
+      } catch (error) {
+        failures.push(file.name + ": " + error.message);
+      }
+    }
+    if (imported) {
+      const params = new URLSearchParams(location.search);
+      params.set("view", "library");
+      if (statusFilter.value !== "all") params.set("status", statusFilter.value);
+      if (memeSearch.value) params.set("q", memeSearch.value);
+      params.set("sort", newestFirst ? "newest" : "oldest");
+      params.set("addOpen", "1");
+      if (failures.length) {
+        params.set("importError", failures.join(" | "));
+      }
+      location.assign("?" + params.toString());
+    } else {
+      memeStatus.textContent = failures.join(" | ") || "No images were imported.";
     }
   }
   memeFile.addEventListener("change", async () => {
-    if (memeFile.files.length) await importMemeFile(memeFile.files[0]);
+    if (memeFile.files.length) await importMemeFiles(memeFile.files);
     memeFile.value = "";
   });
   for (const eventName of ["dragenter", "dragover"]) {
@@ -736,9 +774,9 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     });
   }
   addButton.addEventListener("drop", async (event) => {
-    const file = [...event.dataTransfer.files].find((candidate) =>
+    const files = [...event.dataTransfer.files].filter((candidate) =>
       ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(candidate.type));
-    if (file) await importMemeFile(file);
+    if (files.length) await importMemeFiles(files);
     else memeStatus.textContent = "Drop a PNG, JPEG, GIF, or WebP image.";
   });
   const memeDetail = document.querySelector("#memeDetail");
