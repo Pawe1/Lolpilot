@@ -506,6 +506,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   document.querySelector("#openLibrary").addEventListener("click", () => {
     history.replaceState(null, "", "?view=library");
     document.body.classList.add("library-open");
+    refreshMemeStatus();
   });
   document.querySelector("#closeLibrary").addEventListener("click", () => {
     history.replaceState(null, "", location.pathname);
@@ -519,6 +520,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   let memeSignature = "";
   let pendingMemeRefresh = false;
   async function refreshMemeStatus() {
+    if (!document.body.classList.contains("library-open")) return;
     try {
       const response = await fetch("/api/memes/status", { cache: "no-store" });
       if (!response.ok) return;
@@ -608,10 +610,8 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   if (initialParams.has("status")) statusFilter.value = initialParams.get("status");
   if (initialParams.has("q")) memeSearch.value = initialParams.get("q");
   filterLibrary();
-  if (libraryMode) {
-    refreshMemeStatus();
-    setInterval(refreshMemeStatus, 2500);
-  }
+  if (libraryMode) refreshMemeStatus();
+  setInterval(refreshMemeStatus, 2500);
   async function post(path, body) {
     const response = await fetch(path, {
       method: "POST",
