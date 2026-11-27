@@ -144,6 +144,14 @@ export function qualityScore(image) {
     return Number(image.byteSize || 0);
 }
 
+export function feedbackRankingAdjustment(image) {
+    const hits = Math.max(0, Number(image?.feedback?.hit) || 0);
+    const misses = Math.max(0, Number(image?.feedback?.miss) || 0);
+    if (!hits && !misses) return 0;
+    const boundedSignal = (hits - misses) / (hits + misses + 6);
+    return Math.max(-0.75, Math.min(0.75, boundedSignal * 1.5));
+}
+
 function perceptualDistance(left, right) {
     if (!left?.perceptualHash || !right?.perceptualHash
         || left.perceptualHash.length !== right.perceptualHash.length) return Number.POSITIVE_INFINITY;
@@ -390,7 +398,11 @@ export function findMemes(index, query) {
             const fuzzyMatches = terms.filter((term) =>
                 searchable.some((value) => value.includes(term) || term.includes(value))
             ).length;
-            return { image, score: matches * 4 + fuzzyMatches + Math.min(image.uses, 3) * 0.1 };
+            return {
+                image,
+                score: matches * 4 + fuzzyMatches + Math.min(image.uses, 3) * 0.1
+                    + feedbackRankingAdjustment(image),
+            };
         })
         .filter(({ score }) => score > 0)
         .sort((left, right) => right.score - left.score)
@@ -412,6 +424,85 @@ export async function updateMeme(id, changes) {
     const image = index.images.find((candidate) => candidate.id === id);
     if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
     Object.assign(image, changes, { updatedAt: new Date().toISOString() });
+    await saveMemeIndex(index);
+    return image;
+}
+
+function feedbackFailureCategories(note) {
+    const text = String(note || "").toLocaleLowerCase();
+    const categories = [];
+    if (/\b(box|zone|pozyc|układ|uklad|wąsk|wask|szerok|wysok|linia|wrap|skal|tekst)\w*/i.test(text)) {
+        categories.push("layout");
+    }
+    if (/\b(długi|dlugi|krótk|krotk|caption|punchline|podpis|dowcip|żart|zart|ton|humor)\w*/i.test(text)) {
+        categories.push("caption");
+    }
+    if (/\b(kontekst|użyc|uzyc|zastos|template|szablon|mem|nie pasuje|wrong)\w*/i.test(text)) {
+        categories.push("selection");
+    }
+    return categories.length ? categories : ["unspecified"];
+}
+
+export async function recordMemeFeedback(id, input) {
+    const index = await loadMemeIndex();
+    const image = index.images.find((candidate) => candidate.id === id);
+    if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+    const value = input.value;
+    if (!["hit", "miss"].includes(value)) throw new CanvasError("invalid_feedback", "Feedback must be hit or miss.");
+    const note = String(input.note || "").trim().slice(0, 1000);
+    const captionTexts = Array.isArray(input.captionTexts)
+        ? input.captionTexts.map((caption) => String(caption).slice(0, 500)).slice(0, 8)
+        : [];
+    const createdAt = new Date().toISOString();
+    image.feedback = { ...(image.feedback || {}) };
+    image.feedback[value] = Number(image.feedback[value] || 0) + 1;
+    image.feedback.last = value;
+    image.feedback.events = [
+        ...(image.feedback.events || []),
+        {
+            value,
+            note,
+            captionTexts,
+            template: image.template || "",
+            usageHints: image.usageHints || "",
+            createdAt,
+        },
+    ].slice(-50);
+    if (note) {
+        image.feedback.notes = [
+            ...(image.feedback.notes || []),
+            { value, note, createdAt },
+        ].slice(-20);
+    }
+    image.feedback.learning = image.feedback.learning || {
+        reinforcedCaptions: [],
+        failureCategories: {},
+        notes: [],
+    };
+    if (value === "hit" && captionTexts.length) {
+        const captionKey = captionTexts.join("\n");
+        const reinforced = image.feedback.learning.reinforcedCaptions || [];
+        const existing = reinforced.find((entry) => entry.texts.join("\n") === captionKey);
+        image.feedback.learning.reinforcedCaptions = existing
+            ? reinforced.map((entry) => entry === existing
+                ? { ...entry, weight: Math.min(5, Number(entry.weight || 0) + 1), createdAt }
+                : entry)
+            : [...reinforced, { texts: captionTexts, weight: 1, createdAt }].slice(-8);
+    }
+    if (value === "miss") {
+        for (const category of feedbackFailureCategories(note)) {
+            image.feedback.learning.failureCategories[category] =
+                Math.min(20, Number(image.feedback.learning.failureCategories[category] || 0) + 1);
+        }
+        if (note) {
+            image.feedback.learning.notes = [
+                ...(image.feedback.learning.notes || []),
+                note,
+            ].slice(-12);
+        }
+    }
+    image.uses = Number(image.uses || 0) + 1;
+    image.updatedAt = createdAt;
     await saveMemeIndex(index);
     return image;
 }

@@ -9,7 +9,7 @@ import {
 } from "./src/profiles.mjs";
 import {
     addMeme, addMemeFromUrl, analyzeMeme, analyzeMemeExample, analyzeMemeExampleFromUrl, analyzePendingMemes, deleteMeme, findMemes, keepMeme,
-    LAST_INDEX_RECOVERY, loadMemeIndex, recoverAnalysisState, replaceMeme, replaceMemeImage, saveMemeIndex, setKnowYourMemeUrl, setMemeGuidance, syncAnalysisResults, backupMemeIndex,
+    LAST_INDEX_RECOVERY, loadMemeIndex, recoverAnalysisState, recordMemeFeedback, replaceMeme, replaceMemeImage, saveMemeIndex, setKnowYourMemeUrl, setMemeGuidance, syncAnalysisResults, backupMemeIndex,
 } from "./src/memes.mjs";
 
 const servers = new Map();
@@ -1521,28 +1521,12 @@ async function startPreviewServer(_instanceId, image, captionTexts = []) {
                 response.end("Invalid rating.");
                 return;
             }
-            const index = await loadMemeIndex();
-            const current = index.images.find((candidate) => candidate.id === image.id);
-            if (current) {
-                current.feedback = { ...(current.feedback || {}) };
-                current.feedback[body.value] = Number(current.feedback[body.value] || 0) + 1;
-                current.feedback.last = body.value;
-                const note = String(body.note || "").trim().slice(0, 1000);
-                if (note) {
-                    current.feedback.notes = [
-                        ...(current.feedback.notes || []),
-                        {
-                            value: body.value,
-                            note,
-                            createdAt: new Date().toISOString(),
-                        },
-                    ].slice(-20);
-                }
-                current.uses = Number(current.uses || 0) + 1;
-                current.updatedAt = new Date().toISOString();
-                await saveMemeIndex(index);
-            }
-            sendJson(response, { id: image.id, value: body.value });
+            const updated = await recordMemeFeedback(image.id, {
+                value: body.value,
+                note: body.note,
+                captionTexts,
+            });
+            sendJson(response, { id: image.id, value: body.value, feedback: updated.feedback });
             return;
         }
         if (url.pathname === "/image") {
@@ -1882,6 +1866,17 @@ const session = await joinSession({
                         context.push(
                             `A native image attachment matching this topic is available: template="${meme.template}"; tags=${meme.tags.join(",")}.`,
                             meme.usageHints ? `Usage guidance: ${meme.usageHints}` : "",
+                            meme.feedback?.learning?.reinforcedCaptions?.length
+                                ? `Previously successful captions: ${meme.feedback.learning.reinforcedCaptions
+                                    .slice(-3).map((entry) => entry.texts.join(" | ")).join(" ;; ")}`
+                                : "",
+                            Object.keys(meme.feedback?.learning?.failureCategories || {}).length
+                                ? `Avoid known failures for this template: ${Object.entries(meme.feedback.learning.failureCategories)
+                                    .map(([category, count]) => `${category} (${count})`).join(", ")}.`
+                                : "",
+                            meme.feedback?.learning?.notes?.length
+                                ? `User feedback notes: ${meme.feedback.learning.notes.slice(-3).join(" ;; ")}.`
+                                : "",
                             "Image output is currently disabled because this host cannot publish extension images inside assistant responses. Do not mention or attach the image."
                         );
                     } else {
