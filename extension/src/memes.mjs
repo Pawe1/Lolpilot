@@ -833,6 +833,10 @@ export async function recoverAnalysisState() {
 
 export function requestedTemplateName(hint) {
     const text = String(hint || "").trim();
+    const renameMatch = text.match(
+        /(?:nazwij|zmie(?:ń|n) (?:nazwę|tytuł)|rename)\s+.+?\s+(?:jako|na|to)\s+["'“”]?(.+?)["'“”]?$/i
+    );
+    if (renameMatch?.[1]?.trim()) return renameMatch[1].trim().slice(0, 120);
     const match = text.match(
         /(?:nazwij|nazwa|zmie(?:ń|n) tytu(?:ł|l) na|rename(?: it)? to|name(?: it)?|call it)\s*(?::|=)?\s*(.+)$/i
     );
@@ -943,7 +947,36 @@ export async function analyzeMeme(id, hint = "", boxesOnly = false) {
             ].filter((alias) => alias && !/^(unknown template|awaiting analysis)$/i.test(alias)))].slice(0, 8),
         } : {}),
     });
-    if (requestedTemplate) return updated;
+    if (requestedTemplate) {
+        const index = await loadMemeIndex();
+        const renamed = index.images.find((candidate) => candidate.id === id);
+        const duplicate = index.images.find((candidate) => {
+            if (candidate.id === id) return false;
+            const candidateNames = [candidate.template, ...meaningfulAliases(candidate)]
+                .filter(Boolean).map((value) => value.toLocaleLowerCase());
+            const renamedNames = [renamed.template, ...meaningfulAliases(renamed)]
+                .filter(Boolean).map((value) => value.toLocaleLowerCase());
+            return renamedNames.some((name) => candidateNames.includes(name))
+                || perceptualDistance(candidate, renamed) <= 8;
+        });
+        if (duplicate) {
+            return updateMeme(id, {
+                duplicateOf: duplicate.id,
+                replacementSuggested: qualityScore(renamed) > qualityScore(duplicate),
+                analysisStatus: "duplicate",
+                analysisError: `Similar template already exists: ${duplicate.template}.`,
+            });
+        }
+        if (renamed.duplicateOf) {
+            return updateMeme(id, {
+                duplicateOf: "",
+                replacementSuggested: false,
+                analysisStatus: Number(renamed.confidence || 1) >= 0.55 ? "analyzed" : "needs-review",
+                analysisError: "",
+            });
+        }
+        return updated;
+    }
     const cli = findCopilotCli();
     if (!cli) {
         await updateMeme(id, {
