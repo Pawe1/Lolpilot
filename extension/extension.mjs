@@ -1194,12 +1194,33 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   galleryIdentityHint.addEventListener("input", () => {
     reanalyzeIdentity.disabled = !galleryIdentityHint.value.trim();
   });
-  reanalyzeIdentity.addEventListener("click", () => {
+  function updateMemeCard(updated) {
+    const card = document.querySelector('[data-meme-id="' + updated.id + '"]');
+    if (!card) return;
+    card.dataset.meme = JSON.stringify(updated);
+    card.dataset.status = updated.analysisStatus;
+    const title = updated.template || updated.file || "Awaiting analysis";
+    const name = card.querySelector(".meme-name");
+    if (name) {
+      name.textContent = title;
+      name.title = title;
+    }
+    const image = card.querySelector("img");
+    if (image) image.alt = title;
+    const dot = card.querySelector(".status-dot");
+    if (dot) {
+      dot.className = "status-dot status-" + updated.analysisStatus;
+      dot.title = updated.analysisStatus === "duplicate" ? "Duplicate decision" : updated.analysisStatus;
+      dot.setAttribute("aria-label", dot.title);
+    }
+  }
+  reanalyzeIdentity.addEventListener("click", async () => {
     const hint = galleryIdentityHint.value.trim();
     if (!selectedMeme || !hint) return;
     const kymMatch = hint.match(/https?:[/][/](?:www[.])?knowyourmeme[.]com[/][^ "'<>]+/i);
     const knowYourMemeUrl = kymMatch?.[0] || "";
-    run(async () => {
+    reanalyzeIdentity.disabled = true;
+    try {
       if (knowYourMemeUrl) {
         await post("/api/meme/know-your-meme", { id: selectedMeme.id, url: knowYourMemeUrl });
         document.querySelector("#knowYourMemeUrl").value = knowYourMemeUrl;
@@ -1207,11 +1228,19 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         link.href = knowYourMemeUrl;
         link.hidden = false;
       }
-      return post("/api/meme/analyze", {
+      const updated = await post("/api/meme/analyze", {
         id: selectedMeme.id,
         hint: hint.replace(knowYourMemeUrl, "").replace(/\s+/g, " ").trim(),
       });
-    });
+      selectedMeme = updated;
+      updateMemeCard(updated);
+      document.querySelector("#detailTitle").textContent = updated.template || updated.file;
+      filterLibrary();
+    } catch (error) {
+      document.querySelector("#memeStatus").textContent = error.message;
+    } finally {
+      reanalyzeIdentity.disabled = !galleryIdentityHint.value.trim();
+    }
   });
   const galleryUsageGuidance = document.querySelector("#galleryUsageGuidance");
   const saveUsageGuidance = document.querySelector("#saveUsageGuidance");
