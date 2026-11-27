@@ -8,9 +8,10 @@ import {
     profileContext, saveActiveProfile, suggestPrMeme, switchProfile,
 } from "./src/profiles.mjs";
 import {
-    addMeme, addMemeFromUrl, analyzeMeme, analyzeMemeExample, analyzeMemeExampleFromUrl, analyzePendingMemes, deleteMeme, findMemes, keepMeme,
+    addMeme, addMemeFromUrl, analyzeMeme, analyzeMemeExample, analyzeMemeExampleFromUrl, analyzePendingMemes, backfillMemeImageMetadata, deleteMeme, findMemes, keepMeme,
     memeGenerationContext,
     LAST_INDEX_RECOVERY, loadMemeIndex, recoverAnalysisState, recordMemeFeedback, replaceMeme, replaceMemeImage, saveMemeIndex, setKnowYourMemeUrl, setMemeGuidance, syncAnalysisResults, backupMemeIndex,
+    retryFailedAnalyses,
 } from "./src/memes.mjs";
 
 const servers = new Map();
@@ -36,7 +37,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
           title="${escapeHtml(image.analysisStatus === "duplicate" ? "Duplicate decision" : image.analysisStatus)}"
           aria-label="${escapeHtml(image.analysisStatus === "duplicate" ? "Duplicate decision" : image.analysisStatus)}"></span>
         <img src="/api/meme/image?id=${encodeURIComponent(image.id)}&v=${encodeURIComponent(image.updatedAt || image.hash)}" alt="${escapeHtml(image.template || image.file)}">
-        <span class="meme-name" title="${escapeHtml(image.template || "Awaiting analysis")}">${escapeHtml(image.template || "Awaiting analysis")}</span>
+        <span class="meme-name" title="${escapeHtml(image.template || image.file)}">${escapeHtml(image.template || image.file)}</span>
       </button>
     `).join("");
     return `<!doctype html>
@@ -534,7 +535,10 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
           setExamplePending(selectedState.status === "analyzing", failed);
         }
         if (selectedState.status === "needs-review" && selectedState.error) {
-          document.querySelector("#memeStatus").textContent = selectedState.error;
+          document.querySelector("#memeStatus").textContent =
+            selectedState.error.startsWith("Command failed:")
+              ? "Analysis worker failed before producing a result. Retry the failed analysis."
+              : selectedState.error;
         }
       }
       if (memeSignature && state.signature !== memeSignature) {
@@ -562,9 +566,11 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     let visible = 0;
     for (const card of cards) {
       const meme = JSON.parse(card.dataset.meme);
+      const aliases = (meme.templateAliases || []).filter((alias) =>
+        !/^(unknown template|awaiting analysis)$/i.test(String(alias || "").trim()));
       const haystack = [
-        meme.template, meme.file, meme.emotion, meme.visualDescription,
-        ...(meme.templateAliases || []), ...(meme.tone || []), ...(meme.tags || []),
+        meme.template, meme.file, meme.usageHints,
+        ...aliases, ...(meme.tone || []), ...(meme.tags || []),
       ].filter(Boolean).join(" ").toLowerCase();
       const show = (statusFilter.value === "all" || card.dataset.status === statusFilter.value)
         && (!query || haystack.includes(query));
@@ -880,7 +886,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       const image = detailImage;
       image.src = "/api/meme/image?id=" + encodeURIComponent(selectedMeme.id);
       image.alt = selectedMeme.template || selectedMeme.file;
-      document.querySelector("#detailTitle").textContent = selectedMeme.template || "Awaiting analysis";
+      document.querySelector("#detailTitle").textContent = selectedMeme.template || selectedMeme.file;
       replaceMemeButton.hidden = !selectedMeme.duplicateOf;
       replaceMemeButton.textContent = selectedMeme.replacementSuggested ? "Replace existing" : "Keep both";
       duplicateMatch.hidden = !selectedMeme.duplicateOf;
@@ -1335,6 +1341,7 @@ async function startServer() {
     await backupMemeIndex();
     await syncAnalysisResults();
     await recoverAnalysisState();
+    await backfillMemeImageMetadata();
     void analyzePendingMemes();
     const server = createServer(async (request, response) => {
         try {
@@ -1925,6 +1932,11 @@ const session = await joinSession({
                     name: "analyze_pending_memes",
                     description: "Analyze all pending Lolpilot memes with vision",
                     handler: async () => analyzePendingMemes(),
+                },
+                {
+                    name: "retry_failed_analyses",
+                    description: "Retry analyses that failed before producing any title or metadata",
+                    handler: async () => retryFailedAnalyses(),
                 },
                 {
                     name: "find_meme",

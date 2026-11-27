@@ -225,6 +225,12 @@ export function feedbackRankingAdjustment(image) {
     return Math.max(-0.75, Math.min(0.75, boundedSignal * 1.5));
 }
 
+export function meaningfulAliases(image) {
+    return (image?.templateAliases || []).filter((alias) =>
+        !/^(unknown template|awaiting analysis)$/i.test(String(alias || "").trim())
+    );
+}
+
 function perceptualDistance(left, right) {
     if (!left?.perceptualHash || !right?.perceptualHash
         || left.perceptualHash.length !== right.perceptualHash.length) return Number.POSITIVE_INFINITY;
@@ -286,6 +292,29 @@ export async function addMeme({
     index.images.push(image);
     await saveMemeIndex(index);
       return image;
+    });
+}
+
+export async function backfillMemeImageMetadata() {
+    return serializeMemeIndexMutation(async () => {
+        const index = await loadMemeIndex();
+        let changed = 0;
+        for (const image of index.images) {
+            if (Number(image.width) > 0 && Number(image.height) > 0 && Number(image.byteSize) > 0) continue;
+            const path = `${IMAGE_CACHE_DIR}\\${image.file}`;
+            try {
+                const [bytes, fileInfo] = await Promise.all([readFile(path), stat(path)]);
+                const dimensions = imageDimensions(image.mimeType, bytes);
+                if (dimensions.width) image.width = dimensions.width;
+                if (dimensions.height) image.height = dimensions.height;
+                if (fileInfo.size) image.byteSize = fileInfo.size;
+                if (dimensions.width || dimensions.height || fileInfo.size) changed += 1;
+            } catch (error) {
+                if (error?.code !== "ENOENT") throw error;
+            }
+        }
+        if (changed) await saveMemeIndex(index);
+        return { updated: changed };
     });
 }
 
@@ -485,7 +514,7 @@ export function findMemes(index, query) {
         .map((image) => {
             const coreMetadata = tokenizeMetadata([
                 image.template,
-                ...(image.templateAliases || []),
+                ...meaningfulAliases(image),
                 image.clue,
                 ...(image.tags || []),
                 ...(image.tone || []),
@@ -670,8 +699,19 @@ async function markAnalysisFailureUnlessComplete(id, message) {
     if (!current || current.analysisStatus !== "analyzing") return current;
     return updateMeme(id, {
         analysisStatus: "needs-review",
-        analysisError: String(message || "Curator finished without writing an analysis file.").slice(0, 240),
+        analysisError: normalizeAnalysisError(message),
     });
+}
+
+export function normalizeAnalysisError(message) {
+    const text = String(message || "").trim();
+    if (text.startsWith("Command failed:")) {
+        return "Analysis worker stopped before producing a result. Retry the failed analysis.";
+    }
+    if (text.includes("timeout") || text.includes("timed out")) {
+        return "Analysis timed out before producing a result. Retry the failed analysis.";
+    }
+    return text.slice(0, 240) || "Analysis did not produce a result.";
 }
 
 export async function setMemeGuidance(id, input) {
@@ -723,7 +763,7 @@ export async function syncAnalysisResult(id) {
         if (error?.code === "ENOENT") return false;
         await updateMeme(resultId, {
             analysisStatus: "needs-review",
-            analysisError: String(error?.message || error).slice(0, 240),
+            analysisError: normalizeAnalysisError(error?.message || error),
         }).catch(() => {});
         return false;
     }
@@ -898,9 +938,9 @@ export async function analyzeMeme(id, hint = "", boxesOnly = false) {
         ...(requestedTemplate ? {
             template: requestedTemplate,
             templateAliases: [...new Set([
-                ...(image.templateAliases || []),
+                ...meaningfulAliases(image),
                 image.template,
-            ].filter(Boolean))].slice(0, 8),
+            ].filter((alias) => alias && !/^(unknown template|awaiting analysis)$/i.test(alias)))].slice(0, 8),
         } : {}),
     });
     if (requestedTemplate) return updated;
@@ -952,7 +992,7 @@ export async function analyzeMeme(id, hint = "", boxesOnly = false) {
     } catch (error) {
         await updateMeme(id, {
             analysisStatus: "needs-review",
-            analysisError: String(error?.message || "Meme analysis failed.").slice(0, 240),
+            analysisError: normalizeAnalysisError(error?.message || "Meme analysis failed."),
         });
         throw error;
     }
@@ -1222,6 +1262,25 @@ export async function analyzePendingMemes() {
         }
     }
     return results;
+}
+
+export async function retryFailedAnalyses() {
+    const candidates = await serializeMemeIndexMutation(async () => {
+        const index = await loadMemeIndex();
+        const images = index.images.filter((image) =>
+            image.analysisStatus === "needs-review"
+            && !image.template
+            && String(image.analysisError || "").startsWith("Command failed:")
+        );
+        for (const image of images) {
+            image.analysisStatus = "pending";
+            image.analysisError = "Retry queued after a worker/process failure.";
+        }
+        if (images.length) await saveMemeIndex(index);
+        return images.map((image) => image.id);
+    });
+    const started = candidates.length ? await analyzePendingMemes() : [];
+    return { queued: candidates.length, started };
 }
 
 export async function drainAnalysisQueue() {
