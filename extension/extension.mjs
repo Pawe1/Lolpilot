@@ -641,9 +641,9 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
   document.querySelector("#profile").addEventListener("change", (event) =>
     run(() => post("/api/profile/switch", { name: event.target.value })));
 
-  async function importMemeResult(result, navigate = true) {
+  async function importMemeResult(result, navigate = true, startAnalysis = true) {
     status.textContent = "Imported. Agent analysis will run next.";
-    await post("/api/meme/analyze", { id: result.id });
+    if (startAnalysis) await post("/api/meme/analyze", { id: result.id });
     if (!navigate) return result;
     const params = new URLSearchParams(location.search);
     params.set("view", "library");
@@ -691,7 +691,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
       memeStatus.textContent = error.message;
     }
   });
-  async function importMemeFile(file, navigate = true) {
+  async function importMemeFile(file, navigate = true, startAnalysis = true) {
     try {
       const dataUrl = await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -724,7 +724,7 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
         dataUrl,
         perceptualHash
       });
-      await importMemeResult(result, navigate);
+      await importMemeResult(result, navigate, startAnalysis);
     } catch (error) {
       memeStatus.textContent = error.message;
       throw error;
@@ -737,13 +737,14 @@ function renderHtml(profile, profiles, activeName, memeIndex) {
     for (const [index, file] of selected.entries()) {
       memeStatus.textContent = "Importing " + (index + 1) + "/" + selected.length + ": " + file.name;
       try {
-        await importMemeFile(file, false);
+        await importMemeFile(file, false, false);
         imported += 1;
       } catch (error) {
         failures.push(file.name + ": " + error.message);
       }
     }
     if (imported) {
+      await post("/api/meme/analyze-pending", {});
       const params = new URLSearchParams(location.search);
       params.set("view", "library");
       if (statusFilter.value !== "all") params.set("status", statusFilter.value);
@@ -1332,7 +1333,9 @@ async function startServer() {
     await listProfiles();
     await mkdir(IMAGE_CACHE_DIR, { recursive: true });
     await backupMemeIndex();
+    await syncAnalysisResults();
     await recoverAnalysisState();
+    void analyzePendingMemes();
     const server = createServer(async (request, response) => {
         try {
             const url = new URL(request.url, "http://127.0.0.1");
@@ -1394,6 +1397,10 @@ async function startServer() {
             if (request.method === "POST" && url.pathname === "/api/meme/analyze") {
                 const body = await readBody(request);
                 sendJson(response, await analyzeMeme(body.id, body.hint || ""));
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/api/meme/analyze-pending") {
+                sendJson(response, await analyzePendingMemes());
                 return;
             }
             if (request.method === "POST" && url.pathname === "/api/meme/analyze-boxes") {
@@ -1531,29 +1538,48 @@ function selectPrMeme(index, prompt, excludedId = "") {
         && (meme.captionZones || []).length) || null;
 }
 
-async function generatePrMemePreview(prPrompt, excludedId = "") {
-    const index = await loadMemeIndex();
-    const image = selectPrMeme(index, prPrompt, excludedId);
-    if (!image) throw new CanvasError("no_pr_meme_candidate", "No analyzed meme with caption zones is available.");
-    const text = String(prPrompt || "").replace(/\s+/g, " ").trim();
-    const task = text.replace(/^(review|open|prepare|submit|create|mój|mojego)\b[^:]*:?\s*/i, "")
-        .slice(0, 90);
-    const patterns = [
-        [`PR: ${task}`, "And somehow the edge case joined the review"],
-        [`We added ${task}`, "Reviewer: what could possibly go wrong now?"],
-        [`One small PR change`, `Meanwhile: ${task}`],
-    ];
-    const pattern = patterns[(Number(image.feedback?.hit || 0) + Number(image.feedback?.miss || 0))
-        % patterns.length];
-    const singleCaption = /(?:one caption|single caption|1 podpis|jeden podpis)/i
-        .test(`${image.usageHints || ""} ${(image.captionRules || []).join(" ")}`);
-    const captionCount = singleCaption ? 1 : Math.max(1, (image.captionZones || []).length);
-    const captions = Array.from({ length: captionCount }, (_, index) =>
-        pattern[index] || "");
-    return { image, captionTexts: captions };
+function prCaptionsFromMetadata(image, prPrompt) {
+    const prompt = String(prPrompt || "").replace(/\s+/g, " ").trim();
+    const subject = prompt.replace(/^(review|open|prepare|submit|create)\b[^:]*:?\s*/i, "")
+        .slice(0, 90) || "this pull request";
+    const context = `${image.usageHints || ""} ${(image.captionRules || []).join(" ")}`
+        .toLocaleLowerCase();
+    const zones = image.captionZones || [];
+    const examples = image.exampleCaptions || [];
+    const singleCaption = /(?:one caption|single caption|1 podpis|jeden podpis)/i.test(context);
+    const count = singleCaption ? 1 : Math.max(1, zones.length);
+
+    if (/(polish language|ponglish|języka polskiego|polonista)/i.test(context)) {
+        const languageMistake = /file/i.test(subject) ? "FILE'ÓW" : "COMMITÓW";
+        return [languageMistake];
+    }
+    if (/(afraid to ask|knowledge gap|too afraid)/i.test(context) || /I DON'T KNOW/.test(
+        (examples[0]?.texts || []).join(" ")
+    )) {
+        return [
+            `I DON'T KNOW WHY ${subject.toLocaleUpperCase()}`,
+            "AND AT THIS POINT I'M TOO AFRAID TO ASK",
+        ].slice(0, count);
+    }
+    if (/everywhere/i.test(context) || examples.some((example) =>
+        (example.texts || []).some((text) => /everywhere/i.test(text)))) {
+        const keyword = subject.match(/\b(multi-file|sort|error|import|test|review)\b/i)?.[0]
+            || "PR FILES";
+        return [keyword.toLocaleUpperCase(), `${keyword.toLocaleUpperCase()} EVERYWHERE`].slice(0, count);
+    }
+    const roles = zones.map((zone) => String(zone.role || "").toLocaleLowerCase());
+    return Array.from({ length: count }, (_, index) => {
+        const role = roles[index] || "";
+        if (/repeated|callback|punchline/.test(role)) {
+            return `But the PR still has ${subject}`;
+        }
+        if (index === 0) return `PR: ${subject}`;
+        if (index === count - 1) return "And that's what the review found";
+        return "Meanwhile, another edge case";
+    });
 }
 
-async function startPreviewServer(_instanceId, image, captionTexts = [], prOptions = null) {
+async function startPreviewServer(instanceId, image, captionTexts = [], prOptions = null) {
     let renderImage = image;
     let renderCaptionTexts = [...captionTexts];
     const server = createServer(async (request, response) => {
@@ -1580,14 +1606,17 @@ async function startPreviewServer(_instanceId, image, captionTexts = [], prOptio
         }
         if (prOptions && url.pathname === "/pr/regenerate" && request.method === "POST") {
             try {
-                const generated = await generatePrMemePreview(prOptions.prompt, renderImage.id);
-                renderImage = generated.image;
-                renderCaptionTexts = generated.captionTexts;
+                const index = await loadMemeIndex();
+                const next = selectPrMeme(index, prOptions.prompt, renderImage.id);
+                if (!next) throw new CanvasError("no_pr_meme_candidate", "No alternative PR meme is available.");
+                const generatedCaptions = prCaptionsFromMetadata(next, prOptions.prompt);
+                renderImage = next;
+                renderCaptionTexts = generatedCaptions;
                 sendJson(response, {
-                    memeId: renderImage.id,
-                    title: renderImage.template || "Lolpilot PR Meme",
-                    captionZones: renderImage.captionZones || [],
-                    captions: renderCaptionTexts,
+                    memeId: next.id,
+                    title: next.template || "Lolpilot PR Meme",
+                    captionZones: next.captionZones || [],
+                    captions: generatedCaptions,
                 });
             } catch (error) {
                 response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
@@ -1976,7 +2005,15 @@ const session = await joinSession({
                 const index = await loadMemeIndex();
                 const prMode = ctx.input.prMode === true;
                 const prPrompt = String(ctx.input.prPrompt || pendingPrMeme?.prompt || "Review this pull request.");
-                const image = prMode
+                const requestedImage = index.images.find((candidate) =>
+                    candidate.id === String(ctx.input.memeId || ""));
+                if (prMode && (!requestedImage || !Array.isArray(ctx.input.captions))) {
+                    throw new CanvasError(
+                        "pr_meme_package_required",
+                        "PR mode requires one complete package: memeId + captions."
+                    );
+                }
+                const image = prMode && !requestedImage
                     ? selectPrMeme(index, prPrompt)
                     : index.images.find((candidate) => candidate.id === String(ctx.input.memeId));
                 if (!image) throw new CanvasError("meme_not_found", "Meme not found.");

@@ -5,28 +5,38 @@ import { join } from "node:path";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { promisify } from "node:util";
-import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { CanvasError } from "@github/copilot-sdk/extension";
 import { ROOT, ANALYSIS_DIR, IMAGE_CACHE_DIR, MEME_INDEX_PATH } from "./config.mjs";
 
 const analysisWorkers = new Map();
 const MAX_ANALYSIS_WORKERS = 3;
 const execFileAsync = promisify(execFile);
+let memeIndexMutationTail = Promise.resolve();
+const MEME_INDEX_LOCK_PATH = `${MEME_INDEX_PATH}.lock`;
 export let LAST_INDEX_RECOVERY = false;
 export async function loadMemeIndex() {
-    try {
-        const parsed = JSON.parse(await readFile(MEME_INDEX_PATH, "utf8"));
-        LAST_INDEX_RECOVERY = false;
-        return {
-            version: 1,
-            images: Array.isArray(parsed.images) ? parsed.images : [],
-        };
-    } catch (error) {
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            const parsed = JSON.parse(await readFile(MEME_INDEX_PATH, "utf8"));
+            LAST_INDEX_RECOVERY = false;
+            return {
+                version: 1,
+                images: Array.isArray(parsed.images) ? parsed.images : [],
+            };
+        } catch (error) {
+            lastError = error;
+            await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
+        }
+    }
+    {
         const recovered = await restoreMemeIndexBackup();
         if (recovered) {
             LAST_INDEX_RECOVERY = true;
             return recovered;
         }
+        void lastError;
         return { version: 1, images: [] };
     }
 }
@@ -38,11 +48,16 @@ export async function backupMemeIndex() {
         const existing = await readFile(MEME_INDEX_PATH, "utf8");
         JSON.parse(existing);
         const files = (await readdir(backupDirectory))
-            .filter((name) => /^meme-index-.*\.json$/.test(name))
-            .sort()
-            .reverse();
+            .filter((name) => /^meme-index-.*\.json$/.test(name));
+        let orderedNames = files;
         if (files.length) {
-            const newestPath = `${backupDirectory}\\${files[0]}`;
+            const filesByTime = await Promise.all(files.map(async (name) => ({
+                name,
+                time: (await stat(`${backupDirectory}\\${name}`)).mtimeMs,
+            })));
+            filesByTime.sort((left, right) => right.time - left.time);
+            orderedNames = filesByTime.map(({ name }) => name);
+            const newestPath = `${backupDirectory}\\${filesByTime[0].name}`;
             const newest = await readFile(newestPath, "utf8");
             if (newest === existing) return;
             const age = Date.now() - (await stat(newestPath)).mtimeMs;
@@ -50,7 +65,7 @@ export async function backupMemeIndex() {
         }
         const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
         await writeFile(`${backupDirectory}\\meme-index-${timestamp}.json`, existing, "utf8");
-        for (const name of files.slice(13)) {
+        for (const name of orderedNames.slice(13)) {
             await unlink(`${backupDirectory}\\${name}`);
         }
         return true;
@@ -64,15 +79,21 @@ export async function backupMemeIndex() {
 async function restoreMemeIndexBackup() {
     const backupDirectory = `${IMAGE_CACHE_DIR}\\..\\backups`;
     try {
-        const files = (await readdir(backupDirectory))
-            .filter((name) => /^meme-index-.*\.json$/.test(name))
-            .sort()
-            .reverse();
+        const filesByTime = await Promise.all(
+            (await readdir(backupDirectory))
+                .filter((name) => /^meme-index-.*\.json$/.test(name))
+                .map(async (name) => ({
+                    name,
+                    time: (await stat(`${backupDirectory}\\${name}`)).mtimeMs,
+                }))
+        );
+        filesByTime.sort((left, right) => right.time - left.time);
+        const files = filesByTime.map(({ name }) => name);
         for (const file of files) {
             try {
                 const parsed = JSON.parse(await readFile(`${backupDirectory}\\${file}`, "utf8"));
                 if (Array.isArray(parsed.images)) {
-                    await writeFile(MEME_INDEX_PATH, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+                    await writeMemeIndexAtomically(parsed);
                     return parsed;
                 }
             } catch {
@@ -88,8 +109,60 @@ async function restoreMemeIndexBackup() {
 export async function saveMemeIndex(index) {
     await backupMemeIndex();
     await mkdir(IMAGE_CACHE_DIR, { recursive: true });
-    await writeFile(MEME_INDEX_PATH, `${JSON.stringify(index, null, 2)}\n`, "utf8");
+    await writeMemeIndexAtomically(index);
     return index;
+}
+
+async function writeMemeIndexAtomically(index) {
+    const temporaryPath = `${MEME_INDEX_PATH}.${process.pid}.${Date.now()}.tmp`;
+    await writeFile(temporaryPath, `${JSON.stringify(index, null, 2)}\n`, "utf8");
+    await rename(temporaryPath, MEME_INDEX_PATH);
+}
+
+async function acquireMemeIndexLock() {
+    const startedAt = Date.now();
+    while (true) {
+        try {
+            const handle = await open(MEME_INDEX_LOCK_PATH, "wx");
+            await handle.writeFile(`${process.pid}\n${new Date().toISOString()}\n`, "utf8");
+            return handle;
+        } catch (error) {
+            if (error?.code !== "EEXIST") throw error;
+            try {
+                const lockStat = await stat(MEME_INDEX_LOCK_PATH);
+                if (Date.now() - lockStat.mtimeMs > 30000) {
+                    await unlink(MEME_INDEX_LOCK_PATH).catch(() => {});
+                    continue;
+                }
+            } catch {
+                // The lock owner may have released it between open and stat.
+            }
+            if (Date.now() - startedAt > 15000) {
+                throw new Error("Meme index is locked by another operation.");
+            }
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+    }
+}
+
+async function serializeMemeIndexMutation(operation) {
+    let release;
+    const previous = memeIndexMutationTail;
+    memeIndexMutationTail = new Promise((resolve) => {
+        release = resolve;
+    });
+    await previous;
+    let lock;
+    try {
+        lock = await acquireMemeIndexLock();
+        return await operation();
+    } finally {
+        if (lock) {
+            await lock.close().catch(() => {});
+            await unlink(MEME_INDEX_LOCK_PATH).catch(() => {});
+        }
+        release();
+    }
 }
 
 export function normalizeTags(tags) {
@@ -165,7 +238,8 @@ function perceptualDistance(left, right) {
 export async function addMeme({
     fileName, mimeType, dataUrl, tags, clue, source = "local-import", perceptualHash = ""
 }) {
-    if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mimeType)) {
+    return serializeMemeIndexMutation(async () => {
+      if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mimeType)) {
         throw new CanvasError("invalid_image_type", "Use PNG, JPEG, GIF, or WebP.");
     }
     const match = String(dataUrl || "").match(/^data:[^;]+;base64,(.+)$/);
@@ -211,13 +285,15 @@ export async function addMeme({
     };
     index.images.push(image);
     await saveMemeIndex(index);
-    return image;
+      return image;
+    });
 }
 
 export async function replaceMemeImage(id, {
     fileName, mimeType, dataUrl
 }) {
-    if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mimeType)) {
+    return serializeMemeIndexMutation(async () => {
+      if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mimeType)) {
         throw new CanvasError("invalid_image_type", "Use PNG, JPEG, GIF, or WebP.");
     }
     const match = String(dataUrl || "").match(/^data:[^;]+;base64,(.+)$/);
@@ -264,7 +340,8 @@ export async function replaceMemeImage(id, {
         updatedAt: new Date().toISOString(),
     });
     await saveMemeIndex(index);
-    return image;
+      return image;
+    });
 }
 
 export function isPrivateAddress(address) {
@@ -485,22 +562,26 @@ export function memeGenerationContext(image) {
 }
 
 export async function deleteMeme(id) {
-    const index = await loadMemeIndex();
-    const image = index.images.find((candidate) => candidate.id === id);
-    if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
-    await unlink(`${IMAGE_CACHE_DIR}\\${image.file}`);
-    index.images = index.images.filter((candidate) => candidate.id !== id);
-    await saveMemeIndex(index);
-    return { deleted: id };
+    return serializeMemeIndexMutation(async () => {
+        const index = await loadMemeIndex();
+        const image = index.images.find((candidate) => candidate.id === id);
+        if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+        await unlink(`${IMAGE_CACHE_DIR}\\${image.file}`);
+        index.images = index.images.filter((candidate) => candidate.id !== id);
+        await saveMemeIndex(index);
+        return { deleted: id };
+    });
 }
 
 export async function updateMeme(id, changes) {
-    const index = await loadMemeIndex();
-    const image = index.images.find((candidate) => candidate.id === id);
-    if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
-    Object.assign(image, changes, { updatedAt: new Date().toISOString() });
-    await saveMemeIndex(index);
-    return image;
+    return serializeMemeIndexMutation(async () => {
+        const index = await loadMemeIndex();
+        const image = index.images.find((candidate) => candidate.id === id);
+        if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+        Object.assign(image, changes, { updatedAt: new Date().toISOString() });
+        await saveMemeIndex(index);
+        return image;
+    });
 }
 
 function feedbackFailureCategories(note) {
@@ -519,11 +600,12 @@ function feedbackFailureCategories(note) {
 }
 
 export async function recordMemeFeedback(id, input) {
-    const index = await loadMemeIndex();
-    const image = index.images.find((candidate) => candidate.id === id);
-    if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
-    const value = input.value;
-    if (!["hit", "miss"].includes(value)) throw new CanvasError("invalid_feedback", "Feedback must be hit or miss.");
+    return serializeMemeIndexMutation(async () => {
+        const index = await loadMemeIndex();
+        const image = index.images.find((candidate) => candidate.id === id);
+        if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+        const value = input.value;
+        if (!["hit", "miss"].includes(value)) throw new CanvasError("invalid_feedback", "Feedback must be hit or miss.");
     const note = String(input.note || "").trim().slice(0, 1000);
     const captionTexts = Array.isArray(input.captionTexts)
         ? input.captionTexts.map((caption) => String(caption).slice(0, 500)).slice(0, 8)
@@ -578,8 +660,9 @@ export async function recordMemeFeedback(id, input) {
     }
     image.uses = Number(image.uses || 0) + 1;
     image.updatedAt = createdAt;
-    await saveMemeIndex(index);
-    return image;
+        await saveMemeIndex(index);
+        return image;
+    });
 }
 
 async function markAnalysisFailureUnlessComplete(id, message) {
@@ -592,21 +675,23 @@ async function markAnalysisFailureUnlessComplete(id, message) {
 }
 
 export async function setMemeGuidance(id, input) {
-    const index = await loadMemeIndex();
-    const image = index.images.find((candidate) => candidate.id === id);
-    if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
-    const guidance = String(input.guidance || "").trim().slice(0, 2000);
-    if (guidance) image.usageHints = guidance;
-    else image.usageHints = "";
-    image.captionRules = [...new Set([
-        ...(image.captionRules || []).filter((rule) =>
-            !String(rule).startsWith("User usage guidance:")
-        ),
-        ...(guidance ? [`User usage guidance: ${guidance}`] : []),
-    ])].slice(-12);
-    image.updatedAt = new Date().toISOString();
-    await saveMemeIndex(index);
-    return image;
+    return serializeMemeIndexMutation(async () => {
+        const index = await loadMemeIndex();
+        const image = index.images.find((candidate) => candidate.id === id);
+        if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+        const guidance = String(input.guidance || "").trim().slice(0, 2000);
+        if (guidance) image.usageHints = guidance;
+        else image.usageHints = "";
+        image.captionRules = [...new Set([
+            ...(image.captionRules || []).filter((rule) =>
+                !String(rule).startsWith("User usage guidance:")
+            ),
+            ...(guidance ? [`User usage guidance: ${guidance}`] : []),
+        ])].slice(-12);
+        image.updatedAt = new Date().toISOString();
+        await saveMemeIndex(index);
+        return image;
+    });
 }
 
 export async function syncAnalysisResults() {
@@ -645,9 +730,10 @@ export async function syncAnalysisResult(id) {
 }
 
 export async function recoverAnalysisState() {
-    const index = await loadMemeIndex();
-    let changed = false;
-    for (const image of index.images) {
+    return serializeMemeIndexMutation(async () => {
+        const index = await loadMemeIndex();
+        let changed = false;
+        for (const image of index.images) {
         const duplicate = image.duplicateOf
             ? index.images.find((candidate) => candidate.id === image.duplicateOf)
             : null;
@@ -699,9 +785,10 @@ export async function recoverAnalysisState() {
             image.analysisError = "";
             changed = true;
         }
-    }
-    if (changed) await saveMemeIndex(index);
-    return index.images.filter((image) => image.analysisStatus === "pending").length;
+        }
+        if (changed) await saveMemeIndex(index);
+        return index.images.filter((image) => image.analysisStatus === "pending").length;
+    });
 }
 
 export function requestedTemplateName(hint) {
@@ -1062,56 +1149,62 @@ export async function storeMemeAnalysis(id, content) {
 }
 
 export async function replaceMeme(existingId, replacementId) {
-    const index = await loadMemeIndex();
-    const existing = index.images.find((image) => image.id === existingId);
-    const replacement = index.images.find((image) => image.id === replacementId);
-    if (!existing || !replacement) throw new CanvasError("meme_not_found", "Replacement record was not found.");
-    const mergedTags = [...new Set([...(existing.tags || []), ...(replacement.tags || [])])];
-    await unlink(`${IMAGE_CACHE_DIR}\\${existing.file}`);
-    index.images = index.images.filter((image) => image.id !== existingId);
-    replacement.templateAliases = [...new Set([
-        ...(replacement.templateAliases || []),
-        existing.template,
-        ...(existing.templateAliases || []),
-    ].filter(Boolean))].slice(0, 8);
-    replacement.tags = mergedTags;
-    replacement.duplicateOf = "";
-    replacement.replacementSuggested = false;
-    replacement.analysisStatus = replacement.confidence < 0.55 ? "needs-review" : "analyzed";
-    await saveMemeIndex(index);
-    return replacement;
+    return serializeMemeIndexMutation(async () => {
+        const index = await loadMemeIndex();
+        const existing = index.images.find((image) => image.id === existingId);
+        const replacement = index.images.find((image) => image.id === replacementId);
+        if (!existing || !replacement) throw new CanvasError("meme_not_found", "Replacement record was not found.");
+        const mergedTags = [...new Set([...(existing.tags || []), ...(replacement.tags || [])])];
+        await unlink(`${IMAGE_CACHE_DIR}\\${existing.file}`);
+        index.images = index.images.filter((image) => image.id !== existingId);
+        replacement.templateAliases = [...new Set([
+            ...(replacement.templateAliases || []),
+            existing.template,
+            ...(existing.templateAliases || []),
+        ].filter(Boolean))].slice(0, 8);
+        replacement.tags = mergedTags;
+        replacement.duplicateOf = "";
+        replacement.replacementSuggested = false;
+        replacement.analysisStatus = replacement.confidence < 0.55 ? "needs-review" : "analyzed";
+        await saveMemeIndex(index);
+        return replacement;
+    });
 }
 
 export async function keepMeme(id) {
-    const index = await loadMemeIndex();
-    const image = index.images.find((candidate) => candidate.id === id);
-    if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
-    image.duplicateOf = "";
-    image.replacementSuggested = false;
-    image.analysisStatus = Number(image.confidence || 0) < 0.55 ? "needs-review" : "analyzed";
-    image.analysisError = "";
-    await saveMemeIndex(index);
-    return image;
+    return serializeMemeIndexMutation(async () => {
+        const index = await loadMemeIndex();
+        const image = index.images.find((candidate) => candidate.id === id);
+        if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+        image.duplicateOf = "";
+        image.replacementSuggested = false;
+        image.analysisStatus = Number(image.confidence || 0) < 0.55 ? "needs-review" : "analyzed";
+        image.analysisError = "";
+        await saveMemeIndex(index);
+        return image;
+    });
 }
 
 export async function setKnowYourMemeUrl(id, value) {
-    const index = await loadMemeIndex();
-    const image = index.images.find((candidate) => candidate.id === id);
-    if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
-    const raw = String(value || "").trim();
-    if (raw) {
-        const url = new URL(raw);
-        if (!["http:", "https:"].includes(url.protocol) || url.hostname !== "knowyourmeme.com"
-            && !url.hostname.endsWith(".knowyourmeme.com")) {
-            throw new CanvasError("invalid_kym_url", "Use a URL from knowyourmeme.com.");
+    return serializeMemeIndexMutation(async () => {
+        const index = await loadMemeIndex();
+        const image = index.images.find((candidate) => candidate.id === id);
+        if (!image) throw new CanvasError("meme_not_found", "Meme not found.");
+        const raw = String(value || "").trim();
+        if (raw) {
+            const url = new URL(raw);
+            if (!["http:", "https:"].includes(url.protocol) || url.hostname !== "knowyourmeme.com"
+                && !url.hostname.endsWith(".knowyourmeme.com")) {
+                throw new CanvasError("invalid_kym_url", "Use a URL from knowyourmeme.com.");
+            }
+            image.knowYourMemeUrl = url.href;
+        } else {
+            image.knowYourMemeUrl = "";
         }
-        image.knowYourMemeUrl = url.href;
-    } else {
-        image.knowYourMemeUrl = "";
-    }
-    image.updatedAt = new Date().toISOString();
-    await saveMemeIndex(index);
-    return image;
+        image.updatedAt = new Date().toISOString();
+        await saveMemeIndex(index);
+        return image;
+    });
 }
 
 export async function analyzePendingMemes() {
