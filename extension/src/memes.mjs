@@ -793,8 +793,9 @@ export async function recoverAnalysisState() {
                 continue;
             }
         }
-        if (image.duplicateOf && image.analysisStatus === "needs-review") {
+        if (duplicate && image.duplicateOf && image.analysisStatus !== "duplicate") {
             image.analysisStatus = "duplicate";
+            image.analysisError = `Similar template already exists: ${duplicate.template}.`;
             changed = true;
         }
         if (image.analysisStatus === "analyzing") {
